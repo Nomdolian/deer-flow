@@ -82,7 +82,7 @@ slow — and that's fine, because they're never on the critical execution path.
 | Phase | Status | Notes |
 |---|---|---|
 | 0 — Foundations | ✅ | DB models, structured decision log, global kill switch with auto-triggers |
-| 1 — Data layer | ✅ (forex) | Unified `Candle` schema, `DataProvider` interface, CSV provider (backtest/bootstrap), MT5 live provider, feed health/staleness monitor |
+| 1 — Data layer | ✅ (forex) | Unified `Candle` schema, `DataProvider` interface, CSV provider (backtest/bootstrap), MT5 live provider, Alpha Vantage live provider (forex/equities/crypto — no MT5/broker needed), feed health/staleness monitor |
 | 2 — Signal engines | ✅ | SMC/ICT engine (BOS/CHoCH, order blocks, FVG, liquidity sweeps, premium/discount), EMA/RSI/ATR indicator engine, isolated meme-momentum engine |
 | 3 — Risk manager | ✅ | Equity-scaled position sizing, portfolio exposure cap, correlation-group caps, isolated meme bucket, daily/weekly loss limits (auto kill switch), consecutive-loss circuit breaker |
 | 4 — Execution layer | ✅ | Common adapter interface, idempotent client-order-IDs, fully functional `PaperAdapter` simulator, `MT5Adapter` (Windows/live only) |
@@ -110,7 +110,7 @@ app/
   logging_utils.py      structured decision log (Postgres + stdout JSON)
   db/                    SQLAlchemy models + session/engine setup
   killswitch/            global kill switch service
-  data/                  Candle schema, DataProvider interface, CSV + MT5 providers, feed health
+  data/                  Candle schema, DataProvider interface, CSV + MT5 + Alpha Vantage providers, feed health
   signals/               SMC/ICT engine, indicator engine, meme engine — pure functions
   risk/                  RiskManager, correlation groups, position sizing
   execution/              ExecutionAdapter interface, PaperAdapter, MT5Adapter
@@ -175,6 +175,29 @@ parameters on the same data you validate on.**
 connection, for dry-running the pipeline. This must run continuously on the
 always-on server (a systemd unit or a long-running container), not on a
 machine that sleeps — that's the whole point of the architecture.
+
+### Live data without a broker: Alpha Vantage
+
+If you don't have an MT5/broker connection set up yet, `AlphaVantageProvider`
+gets real market data (forex, equities, or crypto majors) with just an API
+key — no broker account needed:
+
+```bash
+# .env: ALPHA_VANTAGE_API_KEY=your-key (free tier at alphavantage.co/support/#api-key)
+.venv/bin/python -m scripts.run_live_paper \
+  --instrument EURUSD --timeframe D1 --source alphavantage \
+  --asset-class forex --starting-balance 10000
+```
+
+The free tier only serves **daily** bars for forex and crypto (`--timeframe
+D1`) — the intraday FX/crypto endpoints return a "premium endpoint" error
+without a paid Alpha Vantage plan; equity intraday is available free but
+rate-limited. `AlphaVantageProvider` treats that as a hard failure rather
+than silently falling back to something else — same fail-closed rule as
+every other data path in this system. See
+`app/data/providers/alpha_vantage_provider.py` for the supported
+asset-class/timeframe combinations (indices/commodities aren't covered —
+Alpha Vantage has no clean retail endpoint for those).
 
 ## Mobile app
 

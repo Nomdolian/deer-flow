@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     mt5_server: str = ""
     mt5_path: str = ""
 
+    alpha_vantage_api_key: str = ""
+
     anthropic_api_key: str = ""
 
     api_auth_secret: str = "change-me-to-a-long-random-value"

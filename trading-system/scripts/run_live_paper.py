@@ -7,8 +7,16 @@ laptop that sleeps.
     python -m scripts.run_live_paper --instrument EURUSD --timeframe H1 \
         --source mt5 --starting-balance 10000
 
-Use --source csv (with --data-dir) to dry-run against local history without an
-MT5 connection, replaying it candle-by-candle.
+    python -m scripts.run_live_paper --instrument EURUSD --timeframe D1 \
+        --source alphavantage --asset-class forex --starting-balance 10000
+
+--source alphavantage requires ALPHA_VANTAGE_API_KEY in .env. Its free tier
+only serves DAILY bars for forex/crypto (--timeframe D1) — intraday FX/crypto
+needs a paid Alpha Vantage plan; equity intraday is free but rate-limited.
+See app/data/providers/alpha_vantage_provider.py.
+
+Use --source csv (with --data-dir) to dry-run against local history without a
+live connection, replaying it candle-by-candle.
 """
 
 import argparse
@@ -30,6 +38,10 @@ def build_provider(source: str, data_dir: str | None, asset_class: AssetClass) -
         from app.data.providers.mt5_provider import MT5Provider
 
         return MT5Provider(asset_class=asset_class)
+    if source == "alphavantage":
+        from app.data.providers.alpha_vantage_provider import AlphaVantageProvider
+
+        return AlphaVantageProvider(asset_class=asset_class)
     if source == "csv":
         if not data_dir:
             raise ValueError("--data-dir is required when --source csv")
@@ -43,7 +55,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--instrument", required=True)
     parser.add_argument("--timeframe", default="H1")
-    parser.add_argument("--source", default="mt5", choices=["mt5", "csv"])
+    parser.add_argument("--source", default="mt5", choices=["mt5", "alphavantage", "csv"])
     parser.add_argument("--data-dir")
     parser.add_argument("--asset-class", default="forex", choices=[a.value for a in AssetClass])
     parser.add_argument("--starting-balance", type=float, default=10_000.0)
