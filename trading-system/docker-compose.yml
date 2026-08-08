@@ -1,0 +1,39 @@
+# Minimal always-on-server topology (Phase 0, item 1): Postgres + the API
+# process on one host. The orchestrator loop (scripts/run_live_paper.py) and
+# scheduled jobs (weekly stats/mistake report) are separate long-running
+# processes — run them as additional services/systemd units once you're past
+# the paper-trading validation stage; they aren't wired in here by default so
+# `docker compose up` never silently starts placing trades.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trading
+      POSTGRES_PASSWORD: trading
+      POSTGRES_DB: trading
+    ports:
+      - "5432:5432"
+    volumes:
+      - trading_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading:trading@postgres:5432/trading
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "python -m scripts.init_db && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  trading_pg_data:
