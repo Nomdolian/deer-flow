@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import OrderRecord, SignalRecord, TradeJournalRecord
 from app.logging_utils import log_decision
+from app.notifications.service import notify_position_closed
 from app.risk.manager import record_trade_result
 
 
@@ -57,4 +58,5 @@ def record_trade_close(session: Session, trade_id: str, exit_price: float) -> Tr
         instrument=trade.instrument,
         payload={"trade_id": trade.id, "pnl": pnl, "r_multiple": r_multiple, "outcome": trade.outcome},
     )
+    notify_position_closed(session, trade)
     return trade

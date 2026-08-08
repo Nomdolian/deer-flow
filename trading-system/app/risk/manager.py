@@ -5,6 +5,7 @@ from app.db.models import AssetClass, RiskDecisionRecord, SignalRecord, Strategy
 from app.killswitch.service import engage as engage_kill_switch
 from app.killswitch.service import is_engaged as kill_switch_engaged
 from app.logging_utils import log_decision
+from app.notifications.service import DAILY_LOSS_WARNING_RATIO, notify_daily_loss_approaching
 from app.risk.correlation import correlation_group_for
 from app.risk.models import PortfolioState, RiskCheckResult
 from app.signals.base import Signal
@@ -52,6 +53,8 @@ class RiskManager:
             if daily_loss_pct >= self.daily_loss_limit_pct:
                 engage_kill_switch(session, reason="daily_loss_limit_breached", triggered_by="risk_manager")
                 return RiskCheckResult(accepted=False, reason="daily_loss_limit_breached")
+            if daily_loss_pct >= self.daily_loss_limit_pct * DAILY_LOSS_WARNING_RATIO:
+                notify_daily_loss_approaching(session, ratio_of_limit=daily_loss_pct / self.daily_loss_limit_pct)
 
         if portfolio.weekly_starting_equity > 0:
             weekly_loss_pct = -portfolio.weekly_realized_pnl / portfolio.weekly_starting_equity

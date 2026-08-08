@@ -166,3 +166,20 @@ class DecisionLog(Base):
     instrument: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class DeviceRecord(Base):
+    """A registered mobile client (Phase 8): holds the Expo push token used to
+    deliver notifications for new high-confidence signals, position opened/
+    closed, daily-loss-limit-approaching, kill-switch-triggered, and feed-
+    health events. The client app is a control surface, never an execution
+    host — this table has no bearing on trading logic."""
+
+    __tablename__ = "devices"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    push_token: Mapped[str] = mapped_column(String, unique=True, index=True)
+    platform: Mapped[str] = mapped_column(String)  # "ios" | "android"
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

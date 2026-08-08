@@ -15,7 +15,9 @@ and isn't" before connecting anything to a live account.**
   background processes and won't guarantee a loop fires overnight. Nothing
   here assumes a mobile app or browser tab stays open — see `app/orchestrator.py`
   and `scripts/run_live_paper.py`, which are meant to run under systemd/Docker
-  on a VPS.
+  on a VPS. The `mobile/` app is a **client** of that server (dashboard,
+  signal feed, journal, kill switch, push alerts) — it has no trading logic
+  of its own and the server keeps trading whether or not the app is open.
 - **LLMs never generate trading signals.** Signal generation
   (`app/signals/`) and risk sizing (`app/risk/`) are pure, deterministic,
   backtestable Python — no network calls, no LLM calls, sub-millisecond. The
@@ -67,7 +69,7 @@ Data Ingestion  Signal Engines  Risk Manager  Execution      Journal/Memory
                         │
                  ┌──────┴───────┐
                  │  Client apps │  (app/api — FastAPI read/control surface;
-                 │ PC | Mobile  │   PC/mobile UI itself is not built here)
+                 │ PC | Mobile  │   mobile/ — Expo app; PC dashboard not built)
                  └──────────────┘
 ```
 
@@ -87,7 +89,7 @@ slow — and that's fine, because they're never on the critical execution path.
 | 5 — Memory/journal | ✅ | Trade journal, LLM-assisted post-trade classification (async), weekly stats job, mechanical strategy down-weighting/pausing |
 | 6 — LLM analyst | ✅ | Claude API client, thesis synthesis + contradiction flagging, weekly mistake-pattern report |
 | 7 — Backtester | ✅ | Same engine functions live/backtest, spread/slippage/commission modeling, no lookahead, walk-forward split |
-| 8 — Client apps | ⚠️ partial | FastAPI backend (positions/signals/journal/strategies/kill-switch) with API-key + optional TOTP auth. **PC/mobile UI is not built** — this is a backend for one to be built against. |
+| 8 — Client apps | ✅ mobile, ⚠️ no PC UI | FastAPI backend (positions/signals/journal/strategies/kill-switch/devices) with API-key + optional TOTP auth, plus a React Native/Expo mobile app (`mobile/`) — dashboard, signal feed, journal, strategy performance, one-tap kill switch (TOTP-gated disengage), and push notifications. No PC dashboard yet. |
 
 **Not built / explicit next steps:** crypto/stocks/commodities data+execution
 adapters (forex/indices is the recommended first asset class per the spec's
@@ -97,7 +99,8 @@ search for one); multi-strategy portfolio backtesting (the backtester
 validates one engine/instrument at a time, matching Build Order step 2; the
 live `RiskManager` does enforce portfolio-wide caps); a pgvector-backed
 semantic trade retrieval store for the LLM analyst (the relational journal
-schema is ready for one to be bolted on); the PC/mobile client applications.
+schema is ready for one to be bolted on); a PC desktop dashboard (the mobile
+app and PC dashboard would share the same FastAPI backend).
 
 ## Repository layout
 
@@ -116,11 +119,14 @@ app/
   backtest/               backtest engine, metrics, walk-forward validation
   orchestrator.py         ties data -> signals -> risk -> execution -> journal for one instrument
   api/                    FastAPI read/control surface for client apps
+  notifications/          device registration + Expo push fan-out for key events
 scripts/
   init_db.py              create tables
   run_backtest.py          walk-forward backtest a strategy against local CSV history
   run_live_paper.py        run the orchestrator loop against a live/CSV feed through PaperAdapter
 tests/                     pytest suite (signal engines, risk manager, backtester, execution, orchestrator)
+mobile/                    React Native/Expo client — dashboard, signals, journal, strategies,
+                            kill switch, push notifications. See mobile/README.md.
 ```
 
 ## Setup
@@ -170,6 +176,18 @@ connection, for dry-running the pipeline. This must run continuously on the
 always-on server (a systemd unit or a long-running container), not on a
 machine that sleeps — that's the whole point of the architecture.
 
+## Mobile app
+
+```bash
+cd mobile
+npm install
+npx expo start   # scan the QR code with Expo Go
+```
+
+Point it at the FastAPI server's URL + `API_AUTH_SECRET` from the Settings
+screen. See `mobile/README.md` for push notification setup (needs an EAS
+project ID) and building a standalone app for the App/Play Store.
+
 ## Build order (matches the spec)
 
 1. Phase 0 + 1 for forex/indices (done here).
@@ -183,7 +201,8 @@ machine that sleeps — that's the whole point of the architecture.
    their isolated risk bucket from day one — already implemented in
    `RiskManager`).
 6. Client apps (Phase 8) can be built in parallel against the FastAPI backend
-   here, since they only need the API/DB, not the trading logic itself.
+   here, since they only need the API/DB, not the trading logic itself — the
+   mobile app already is one; a PC dashboard would be another.
 
 ## Non-negotiable constraints (enforced in code, not just documented)
 

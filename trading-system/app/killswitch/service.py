@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import KillSwitchState
 from app.logging_utils import log_decision
+from app.notifications.service import notify_kill_switch_triggered
 
 _GLOBAL_ID = "global"
 
@@ -46,6 +47,7 @@ def engage(session: Session, *, reason: str, triggered_by: str) -> KillSwitchSta
         agent_id=triggered_by,
         payload={"reason": reason},
     )
+    notify_kill_switch_triggered(session, reason=reason, triggered_by=triggered_by)
     return state
 
 

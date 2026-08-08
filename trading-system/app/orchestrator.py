@@ -11,6 +11,7 @@ from app.execution.paper_adapter import PaperAdapter
 from app.journal.service import record_trade_close, record_trade_open
 from app.killswitch.service import KillSwitchEngaged, assert_not_engaged
 from app.logging_utils import log_decision
+from app.notifications.service import notify_position_opened, notify_signal
 from app.risk.correlation import correlation_group_for
 from app.risk.manager import RiskManager
 from app.risk.models import OpenPosition, PortfolioState
@@ -96,6 +97,7 @@ class Orchestrator:
             if signal is None:
                 continue
             self._ensure_strategy_version(session, signal.strategy_id, signal.strategy_version, signal.asset_class)
+            notify_signal(session, signal)
             self._handle_signal(session, signal, engine)
             break  # first accepted-or-not signal this cycle; multi-engine arbitration is a Phase 6 thesis/contradiction concern
 
@@ -152,6 +154,7 @@ class Orchestrator:
             if signal_record is not None:
                 trade = record_trade_open(session, order_record, signal_record, result.size)
                 _OPEN_TRADE_BY_CLIENT_ORDER_ID[client_order_id] = trade.id
+            notify_position_opened(session, order_record)
 
     def _portfolio_state(self, session: Session) -> PortfolioState:
         equity = self.execution.get_equity()
