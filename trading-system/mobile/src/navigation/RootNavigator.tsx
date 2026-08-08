@@ -3,6 +3,7 @@ import { DarkTheme, NavigationContainer } from "@react-navigation/native";
 import React from "react";
 import { Text } from "react-native";
 
+import AssetsScreen from "../screens/AssetsScreen";
 import DashboardScreen from "../screens/DashboardScreen";
 import JournalScreen from "../screens/JournalScreen";
 import KillSwitchScreen from "../screens/KillSwitchScreen";
@@ -27,6 +28,7 @@ const navTheme = {
 
 const TAB_ICONS: Record<string, string> = {
   Dashboard: "📊",
+  Assets: "🧾",
   Signals: "⚡",
   Journal: "📓",
   Strategies: "🧭",
@@ -48,6 +50,7 @@ export default function RootNavigator() {
         })}
       >
         <Tab.Screen name="Dashboard" component={DashboardScreen} />
+        <Tab.Screen name="Assets" component={AssetsScreen} />
         <Tab.Screen name="Signals" component={SignalsScreen} />
         <Tab.Screen name="Journal" component={JournalScreen} />
         <Tab.Screen name="Strategies" component={StrategiesScreen} />

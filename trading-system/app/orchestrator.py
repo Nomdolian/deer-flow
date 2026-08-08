@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.data.feed_health import is_stale, record_candle_seen
 from app.data.provider_base import DataProvider
-from app.db.models import OrderRecord, SignalRecord, StrategyVersion, TradeJournalRecord
+from app.db.models import AssetClass, OrderRecord, SignalRecord, StrategyVersion, TradeJournalRecord
 from app.execution.base import ExecutionAdapter, OrderRequest
 from app.execution.paper_adapter import PaperAdapter
 from app.journal.service import record_trade_close, record_trade_open
@@ -42,6 +42,7 @@ class Orchestrator:
         risk_manager: RiskManager | None = None,
         lookback: int = 300,
         feed_stale_seconds: int | None = None,
+        instrument_asset_classes: dict[str, AssetClass] | None = None,
     ):
         self.session_factory = session_factory
         self.data_provider = data_provider
@@ -58,15 +59,23 @@ class Orchestrator:
         # the system never trades. See scripts/run_live_paper.py for how this is
         # derived from the timeframe.
         self.feed_stale_seconds = feed_stale_seconds
+        # When several Orchestrators share one execution adapter (WatchlistRunner:
+        # one account across multiple selected assets, so the portfolio/
+        # correlation caps mean something), each open position on that adapter
+        # can belong to a different asset class than THIS orchestrator's own
+        # engines. Pass the same dict instance across all of them so every
+        # orchestrator can tag every position with its real asset class instead
+        # of assuming its own. None keeps single-instrument behavior unchanged.
+        self.instrument_asset_classes = instrument_asset_classes
 
-    def run_once(self) -> None:
+    def run_once(self, *, evaluate_new_signals: bool = True) -> None:
         session: Session = self.session_factory()
         try:
-            self._run_once(session)
+            self._run_once(session, evaluate_new_signals=evaluate_new_signals)
         finally:
             session.close()
 
-    def _run_once(self, session: Session) -> None:
+    def _run_once(self, session: Session, *, evaluate_new_signals: bool = True) -> None:
         try:
             assert_not_engaged(session)
         except KillSwitchEngaged as exc:
@@ -97,8 +106,16 @@ class Orchestrator:
             log_decision(session, event_type="cycle_skipped", agent_id="orchestrator", instrument=self.instrument, payload={"reason": "feed_stale"})
             return
 
-        if self.execution.get_open_positions():
+        has_open_position = any(p.instrument == self.instrument for p in self.execution.get_open_positions())
+        if has_open_position:
             return  # single concurrent position per instrument in this baseline orchestrator
+
+        if not evaluate_new_signals:
+            # This instrument is disabled on the watchlist (or otherwise not
+            # taking new signals) but had no open position to keep monitoring —
+            # everything above (data fetch, price update, stop/target checks)
+            # still ran; there's just nothing further to evaluate this cycle.
+            return
 
         for engine in self.engines:
             signal = engine.evaluate(candles)
@@ -164,12 +181,17 @@ class Orchestrator:
                 _OPEN_TRADE_BY_CLIENT_ORDER_ID[client_order_id] = trade.id
             notify_position_opened(session, order_record)
 
+    def _asset_class_for(self, instrument: str) -> AssetClass:
+        if self.instrument_asset_classes is not None:
+            return self.instrument_asset_classes.get(instrument, self.engines[0].asset_class)
+        return self.engines[0].asset_class
+
     def _portfolio_state(self, session: Session) -> PortfolioState:
         equity = self.execution.get_equity()
         open_positions = [
             OpenPosition(
                 instrument=p.instrument,
-                asset_class=self.engines[0].asset_class,
+                asset_class=self._asset_class_for(p.instrument),
                 strategy_id="",
                 risk_amount=abs(p.entry_price - p.stop_loss) * p.size,
                 correlation_group=correlation_group_for(p.instrument),

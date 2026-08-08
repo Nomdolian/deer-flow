@@ -183,3 +183,24 @@ class DeviceRecord(Base):
     label: Mapped[str | None] = mapped_column(String, nullable=True)
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class WatchlistInstrument(Base):
+    """The set of instruments the user has chosen for the system to trade
+    autonomously (Phase 8 "select what asset" control). Enabling one here
+    does not itself place any order — it only makes WatchlistRunner include
+    that instrument in the data->signal->risk->execution->journal cycle each
+    tick. Disabling stops new signal evaluation for it; existing open
+    positions are unaffected (same "halt new, don't touch existing" rule as
+    the kill switch)."""
+
+    __tablename__ = "watchlist_instruments"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    instrument: Mapped[str] = mapped_column(String, unique=True, index=True)
+    asset_class: Mapped[AssetClass] = mapped_column(Enum(AssetClass))
+    timeframe: Mapped[str] = mapped_column(String, default="D1")
+    data_source: Mapped[str] = mapped_column(String, default="alphavantage")  # "alphavantage" | "mt5" | "csv"
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

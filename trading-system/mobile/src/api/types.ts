@@ -75,3 +75,13 @@ export interface KillSwitchStateDTO {
   triggered_by: string | null;
   engaged_at: string | null;
 }
+
+export interface WatchlistInstrumentDTO {
+  id: string;
+  instrument: string;
+  asset_class: string;
+  timeframe: string;
+  data_source: string;
+  enabled: boolean;
+  updated_at: string;
+}

@@ -15,6 +15,12 @@ executed, that's server-side (`../app/signals`, `../app/risk`,
 
 - **Dashboard** — recent/open orders, a persistent banner when the kill
   switch is engaged.
+- **Assets** — pick which instruments the system trades autonomously. This
+  doesn't guarantee winning trades — nothing can — it controls which assets
+  the risk-managed pipeline evaluates, with portfolio/correlation caps
+  applying across your whole selection on one shared account, not per
+  instrument. Disabling an asset stops new signals for it but keeps
+  monitoring (and correctly closing) anything already open.
 - **Signals** — the live signal feed with confluences and the risk manager's
   accept/reject decision for each one.
 - **Journal** — the trade journal (open + closed trades, R multiple, P&L,

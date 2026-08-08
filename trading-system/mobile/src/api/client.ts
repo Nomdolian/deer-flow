@@ -5,6 +5,7 @@ import type {
   StrategyDTO,
   StrategyPerformanceDTO,
   TradeJournalDTO,
+  WatchlistInstrumentDTO,
 } from "./types";
 
 export class ApiError extends Error {
@@ -98,4 +99,20 @@ export const api = {
 
   unregisterDevice: (creds: ApiCredentials, pushToken: string) =>
     request<{ ok: boolean }>(creds, "/devices/unregister", { method: "POST", body: { push_token: pushToken } }),
+
+  watchlist: (creds: ApiCredentials) => request<WatchlistInstrumentDTO[]>(creds, "/watchlist"),
+
+  addToWatchlist: (
+    creds: ApiCredentials,
+    params: { instrument: string; asset_class: string; timeframe?: string; data_source?: string; enabled?: boolean }
+  ) => request<{ id: string; instrument: string; enabled: boolean }>(creds, "/watchlist", { method: "POST", body: params }),
+
+  setWatchlistEnabled: (creds: ApiCredentials, instrument: string, enabled: boolean) =>
+    request<{ instrument: string; enabled: boolean }>(creds, `/watchlist/${encodeURIComponent(instrument)}/enabled`, {
+      method: "POST",
+      body: { enabled },
+    }),
+
+  removeFromWatchlist: (creds: ApiCredentials, instrument: string) =>
+    request<{ ok: boolean }>(creds, `/watchlist/${encodeURIComponent(instrument)}`, { method: "DELETE" }),
 };

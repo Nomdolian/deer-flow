@@ -86,10 +86,11 @@ slow — and that's fine, because they're never on the critical execution path.
 | 2 — Signal engines | ✅ | SMC/ICT engine (BOS/CHoCH, order blocks, FVG, liquidity sweeps, premium/discount), EMA/RSI/ATR indicator engine, isolated meme-momentum engine |
 | 3 — Risk manager | ✅ | Equity-scaled position sizing, portfolio exposure cap, correlation-group caps, isolated meme bucket, daily/weekly loss limits (auto kill switch), consecutive-loss circuit breaker |
 | 4 — Execution layer | ✅ | Common adapter interface, idempotent client-order-IDs, fully functional `PaperAdapter` simulator, `MT5Adapter` (Windows/live only) |
-| 5 — Memory/journal | ✅ | Trade journal, LLM-assisted post-trade classification (async), weekly stats job, mechanical strategy down-weighting/pausing |
+| 5 — Memory/journal | ✅ | Trade journal, LLM-assisted post-trade classification, weekly stats + mechanical strategy down-weighting/pausing, weekly mistake-pattern report — **all actually scheduled** via `scripts/run_scheduler.py` (APScheduler), not just callable functions |
 | 6 — LLM analyst | ✅ | Claude API client, thesis synthesis + contradiction flagging, weekly mistake-pattern report |
 | 7 — Backtester | ✅ | Same engine functions live/backtest, spread/slippage/commission modeling, no lookahead, walk-forward split |
-| 8 — Client apps | ✅ mobile, ⚠️ no PC UI | FastAPI backend (positions/signals/journal/strategies/kill-switch/devices) with API-key + optional TOTP auth, plus a React Native/Expo mobile app (`mobile/`) — dashboard, signal feed, journal, strategy performance, one-tap kill switch (TOTP-gated disengage), and push notifications. No PC dashboard yet. |
+| 8 — Client apps | ✅ mobile, ⚠️ no PC UI | FastAPI backend (positions/signals/journal/strategies/kill-switch/devices/watchlist) with API-key + optional TOTP auth, plus a React Native/Expo mobile app (`mobile/`) — dashboard, signal feed, journal, strategy performance, **Assets screen to pick what the system trades**, one-tap kill switch (TOTP-gated disengage), and push notifications. No PC dashboard yet. |
+| — Watchlist / multi-asset | ✅ | `WatchlistRunner` trades every enabled instrument each cycle against ONE shared account, so the risk manager's portfolio/correlation caps apply across the whole selection, not per-instrument in isolation. Disabling an instrument stops new signals for it but keeps monitoring (and correctly closing) anything already open. |
 
 **Not built / explicit next steps:** crypto/stocks/commodities data+execution
 adapters (forex/indices is the recommended first asset class per the spec's
@@ -216,6 +217,58 @@ candle interval, so D1 tolerates a long weekend without either sitting
 falsely "stale" forever or masking a genuinely dead feed) — pass
 `feed_stale_seconds` explicitly to `Orchestrator` if you build your own
 runner and skip that script.
+
+## Picking which assets to trade (the watchlist)
+
+**No selection here guarantees a profitable trade — nothing can.** What this
+gives you is control over which assets the risk-managed pipeline runs
+against, with the portfolio caps (correlation groups, meme bucket, daily
+loss limit) applying across your whole selection at once, not per-instrument
+in isolation. That's the actual mechanism, not "the bot picks winners."
+
+Manage the watchlist via the API or the mobile app's **Assets** tab:
+
+```bash
+API_KEY=$(grep API_AUTH_SECRET .env | cut -d= -f2)
+curl -X POST -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"instrument":"EURUSD","asset_class":"forex","timeframe":"D1","data_source":"alphavantage"}' \
+  http://localhost:8000/watchlist
+curl -H "x-api-key: $API_KEY" http://localhost:8000/watchlist
+```
+
+Then run it continuously against one shared paper account:
+
+```bash
+.venv/bin/python -m scripts.run_watchlist --starting-balance 10000 --poll-seconds 60
+```
+
+Toggling an instrument off stops new signal evaluation for it but keeps
+monitoring (and correctly closing) any position it already has open — same
+"halt new, don't touch existing" rule as the kill switch. Changes take
+effect on the next cycle without restarting the process.
+
+## The learning loop is a real scheduled process
+
+Phase 5's mechanical learning loop (consecutive-loss circuit breaker, weekly
+performance stats, mechanical strategy down-weighting/pausing) and Phase 6's
+LLM classification/mistake-pattern report existed as callable functions
+earlier in this build but nothing invoked them on a cadence.
+`scripts/run_scheduler.py` fixes that — run it as a separate process from
+the trading loop (the LLM calls it makes are slow and must never sit on the
+execution path):
+
+```bash
+.venv/bin/python -m scripts.run_scheduler --classification-interval-minutes 15
+```
+
+- Every 15 minutes (configurable): sweeps closed-but-unclassified trades
+  through the LLM analyst (`app/journal/classification.py`).
+- Weekly: recomputes win rate/expectancy/drawdown per strategy version per
+  instrument and applies the hard-coded down-weight/pause rule
+  (`app/journal/stats.py`) — mechanical, not LLM judgment.
+- Weekly: generates the LLM mistake-pattern report
+  (`app/llm_analyst/mistake_report.py`) — a recommendation logged for you to
+  review, never an auto-applied rule change.
 
 ## Mobile app
 

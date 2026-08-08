@@ -190,3 +190,130 @@ def test_custom_feed_stale_seconds_overrides_the_default_for_daily_bars():
     row = session.get(FeedHealthRecord, "EURUSD")
     assert not row.is_stale
     session.close()
+
+
+def test_shared_execution_open_position_only_blocks_its_own_instrument():
+    """One instrument having an open position must not block a different
+    instrument's orchestrator from evaluating a new signal — this is exactly
+    what a shared-account, multi-asset watchlist needs (WatchlistRunner)."""
+    session_local = _session_factory()
+    eur_candles = make_candles(80, instrument="EURUSD")
+    gbp_candles = make_candles(80, instrument="GBPUSD")
+    execution = PaperAdapter(starting_balance=10_000)
+
+    eur_orch = Orchestrator(
+        session_factory=session_local,
+        data_provider=_StaticProvider(eur_candles),
+        engines=[_AlwaysSignalEngine()],
+        execution=execution,
+        instrument="EURUSD",
+        timeframe="H1",
+    )
+    gbp_orch = Orchestrator(
+        session_factory=session_local,
+        data_provider=_StaticProvider(gbp_candles),
+        engines=[_AlwaysSignalEngine()],
+        execution=execution,
+        instrument="GBPUSD",
+        timeframe="H1",
+    )
+
+    eur_orch.run_once()
+    gbp_orch.run_once()
+
+    session = session_local()
+    instruments_traded = {o.instrument for o in session.query(OrderRecord).all()}
+    session.close()
+    assert instruments_traded == {"EURUSD", "GBPUSD"}
+
+
+def test_disabled_instrument_still_gets_stop_loss_closed():
+    """evaluate_new_signals=False (a disabled watchlist row) must not stop an
+    already-open position from being monitored and closed — a real trader
+    doesn't abandon a position just because they stopped looking for new
+    setups on that symbol."""
+    from app.db.models import Direction
+
+    session_local = _session_factory()
+    base_candles = make_candles(80)
+    execution = PaperAdapter(starting_balance=10_000, spread_pct=0, slippage_pct=0)
+
+    class _MutableProvider(DataProvider):
+        name = "mutable"
+
+        def __init__(self, candles: list[Candle]):
+            self.candles = candles
+
+        def historical(self, instrument, timeframe, limit):
+            return self.candles[-limit:]
+
+        def latest(self, instrument, timeframe):
+            return self.candles[-1] if self.candles else None
+
+    provider = _MutableProvider(base_candles)
+    orchestrator = Orchestrator(
+        session_factory=session_local,
+        data_provider=provider,
+        engines=[_AlwaysSignalEngine()],
+        execution=execution,
+        instrument="EURUSD",
+        timeframe="H1",
+    )
+
+    orchestrator.run_once()  # opens a position
+    position = execution.get_open_positions()[0]
+    assert position.direction == Direction.long
+
+    # Next candle's low breaches the stop-loss.
+    stop_candle = Candle(
+        instrument="EURUSD",
+        asset_class=AssetClass.forex,
+        timeframe="H1",
+        time=base_candles[-1].time + timedelta(hours=1),
+        open=position.entry_price,
+        high=position.entry_price + 0.0005,
+        low=position.stop_loss - 0.0001,
+        close=position.entry_price,
+        volume=100.0,
+    )
+    provider.candles = [*base_candles, stop_candle]
+
+    orchestrator.run_once(evaluate_new_signals=False)
+
+    assert execution.get_open_positions() == []
+
+
+def test_shared_execution_tags_open_positions_with_their_own_asset_class():
+    """Without instrument_asset_classes, an orchestrator would tag every open
+    position with its OWN engines' asset class — silently mislabeling a BTCUSD
+    position as forex when evaluated from a EURUSD orchestrator sharing the
+    same account. This is exactly what corrupts the meme-bucket/portfolio-cap
+    split in RiskManager for a multi-asset watchlist."""
+    from app.db.models import Direction
+    from app.execution.base import OrderRequest
+
+    session_local = _session_factory()
+    execution = PaperAdapter(starting_balance=10_000, spread_pct=0, slippage_pct=0)
+    execution.update_price("EURUSD", 1.1000)
+    execution.update_price("BTCUSD", 60000.0)
+    execution.place_order(OrderRequest("o1", "EURUSD", Direction.long, size=1000, stop_loss=1.09, take_profit=1.12))
+    execution.place_order(OrderRequest("o2", "BTCUSD", Direction.long, size=0.1, stop_loss=58000, take_profit=65000))
+
+    asset_classes = {"EURUSD": AssetClass.forex, "BTCUSD": AssetClass.crypto_major}
+    orchestrator = Orchestrator(
+        session_factory=session_local,
+        data_provider=_StaticProvider(make_candles(80)),
+        engines=[_AlwaysSignalEngine()],  # asset_class=forex — would be wrong for BTCUSD without the mapping
+        execution=execution,
+        instrument="EURUSD",
+        timeframe="H1",
+        instrument_asset_classes=asset_classes,
+    )
+
+    session = session_local()
+    portfolio = orchestrator._portfolio_state(session)
+    session.close()
+
+    tagged = {p.instrument: p.asset_class for p in portfolio.open_positions}
+    assert tagged["EURUSD"] == AssetClass.forex
+    assert tagged["BTCUSD"] == AssetClass.crypto_major
