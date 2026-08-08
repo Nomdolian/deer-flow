@@ -24,6 +24,13 @@ mt5 = ["MetaTrader5>=5.0.45"]
 crypto = ["ccxt>=4.4.0"]
 dev = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "ruff>=0.7.0"]
 
+[tool.setuptools.packages.find]
+# Without this, setuptools' flat-layout auto-discovery sees both app/ and
+# mobile/ (a JS/TS project, not a Python package) as top-level candidates and
+# refuses to build ("Multiple top-level packages discovered"). Scope it to
+# just the actual Python package.
+include = ["app*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
