@@ -72,19 +72,13 @@ project ID, the rest of the app still works — you'll just poll instead of
 getting pushed alerts (every screen refreshes on an interval and pull-to-
 refresh).
 
-## Building a real app (App Store / Play Store)
+## Deploying and installing a real app
 
-This scaffold runs great under Expo Go for development and personal use. To
-install it outside Expo Go (so it survives without the Expo Go app, gets a
-real home-screen icon, etc.), build with EAS:
-
-```bash
-npx eas build --platform ios       # or --platform android
-```
-
-That requires an Apple Developer account (iOS) / Play Console account
-(Android) if you want App Store/Play Store distribution — or use an internal
-distribution build to sideload it on your own device without either.
+**See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full step-by-step guide** —
+covers getting the backend reachable from your phone (LAN vs. a proper VPS
+with HTTPS), testing immediately via Expo Go, building a standalone
+installed app with EAS (no dev server needed), and why a public App/Play
+Store listing isn't recommended for this particular app.
 
 ## Security notes
 
