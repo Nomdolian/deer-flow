@@ -148,4 +148,45 @@ def test_stale_feed_blocks_new_signal_generation():
     assert session.query(OrderRecord).count() == 0
     row = session.get(FeedHealthRecord, "EURUSD")
     assert row.is_stale
+
+
+def test_custom_feed_stale_seconds_overrides_the_default_for_daily_bars():
+    """A daily-bar feed only produces one new candle every ~24h — with the
+    global 60s default it would be marked stale forever. An orchestrator
+    configured with a wider feed_stale_seconds (as scripts/run_live_paper.py
+    computes from the timeframe) must still trade against the same 2-hour-old
+    poll that the previous test correctly rejects under the default."""
+    from app.db.models import FeedHealthRecord
+
+    session_local = _session_factory()
+    candles = make_candles(80)
+    execution = PaperAdapter(starting_balance=10_000)
+    orchestrator = Orchestrator(
+        session_factory=session_local,
+        data_provider=_StaticProvider(candles),
+        engines=[_AlwaysSignalEngine()],
+        execution=execution,
+        instrument="EURUSD",
+        timeframe="D1",
+        feed_stale_seconds=86400 * 4,  # matches run_live_paper.py's D1 multiplier
+    )
+
+    session = session_local()
+    session.add(
+        FeedHealthRecord(
+            instrument="EURUSD",
+            last_candle_time=candles[-1].time,
+            last_seen_at=datetime.now(UTC) - timedelta(hours=2),
+            is_stale=False,
+        )
+    )
+    session.commit()
+    session.close()
+
+    orchestrator.run_once()
+
+    session = session_local()
+    assert session.query(OrderRecord).count() == 1
+    row = session.get(FeedHealthRecord, "EURUSD")
+    assert not row.is_stale
     session.close()

@@ -17,21 +17,52 @@ _INTRADAY_INTERVALS = {
     "H1": "60min",
 }
 
+# Alpha Vantage has no direct index-futures or macro-commodity-candle endpoint,
+# so these route through the equity endpoints against a highly liquid, long-
+# established ETF that tracks the underlying — genuinely live OHLCV, but a
+# proxy price, not the literal index/futures print. Only mapped where the ETF
+# choice is unambiguous; anything else in these asset classes fails closed
+# rather than guessing a ticker.
+_INDEX_ETF_PROXIES = {
+    "US30": "DIA",  # SPDR Dow Jones Industrial Average ETF
+    "NAS100": "QQQ",  # Invesco QQQ (Nasdaq-100)
+    "SPX500": "SPY",  # SPDR S&P 500 ETF
+    "US2000": "IWM",  # iShares Russell 2000 ETF
+}
+_COMMODITY_ETF_PROXIES = {
+    "WTI": "USO",  # United States Oil Fund
+    "NATURAL_GAS": "UNG",  # United States Natural Gas Fund
+}
+
 
 class AlphaVantageProvider(DataProvider):
-    """Live market data via Alpha Vantage's REST API — forex/metals
-    (FX_DAILY / FX_INTRADAY), equities (TIME_SERIES_DAILY / TIME_SERIES_INTRADAY),
-    and crypto majors (DIGITAL_CURRENCY_DAILY). Indices/commodities aren't
-    covered: Alpha Vantage has no clean retail endpoint for index futures, so
-    that asset class still needs a dedicated data vendor.
+    """Live market data via Alpha Vantage's REST API, covering every asset
+    class in this system:
 
-    Alpha Vantage's free tier only serves DAILY bars for FX and crypto —
-    the intraday FX/crypto endpoints return a "premium endpoint" error
-    without a paid plan (equity intraday is available free, rate-limited).
-    This surfaces as a RuntimeError rather than silently substituting
-    different data — fail closed, same as every other data path in this
-    system (non-negotiable constraint: missing/unavailable data halts, it
-    never proceeds with a guess).
+    - forex/metals: FX_DAILY / FX_INTRADAY (metals as XAU/XAG "currency" pairs)
+    - equities: TIME_SERIES_DAILY / TIME_SERIES_INTRADAY
+    - crypto majors + meme coins: DIGITAL_CURRENCY_DAILY (same endpoint —
+      "major" vs "meme" is a risk-bucketing distinction elsewhere, not a data-
+      source one; whatever Alpha Vantage lists as a digital currency works)
+    - indices: proxied through _INDEX_ETF_PROXIES (see above)
+    - commodities: proxied through _COMMODITY_ETF_PROXIES where the mapping is
+      unambiguous; gold/silver go through AssetClass.metals as XAUUSD/XAGUSD
+      instead, not this path
+
+    Only crypto is genuinely 24/7. Forex/metals trade ~24/5 (closed weekends);
+    equities, indices, and commodity-ETF proxies only trade their exchange's
+    regular hours. Outside those hours there is correctly no new candle to
+    trade on — the feed-health monitor treats that as expected quiet, not a
+    fault, as long as its staleness threshold is set wide enough for the
+    timeframe in use (see Orchestrator's feed_stale_seconds).
+
+    Alpha Vantage's free tier only serves DAILY bars for FX and crypto — the
+    intraday FX/crypto endpoints return a "premium endpoint" error without a
+    paid plan (equity intraday is available free, rate-limited). This
+    surfaces as a RuntimeError rather than silently substituting different
+    data — fail closed, same as every other data path in this system
+    (non-negotiable constraint: missing/unavailable data halts, it never
+    proceeds with a guess).
     """
 
     name = "alpha_vantage"
@@ -59,8 +90,12 @@ class AlphaVantageProvider(DataProvider):
             return self._fetch_fx(instrument, timeframe)
         if self.asset_class == AssetClass.stocks:
             return self._fetch_equity(instrument, timeframe)
-        if self.asset_class == AssetClass.crypto_major:
+        if self.asset_class in (AssetClass.crypto_major, AssetClass.crypto_meme):
             return self._fetch_crypto_daily(instrument, timeframe)
+        if self.asset_class == AssetClass.indices:
+            return self._fetch_proxied(instrument, timeframe, _INDEX_ETF_PROXIES, "index")
+        if self.asset_class == AssetClass.commodities:
+            return self._fetch_proxied(instrument, timeframe, _COMMODITY_ETF_PROXIES, "commodity")
         raise ValueError(
             f"AlphaVantageProvider does not support asset class {self.asset_class.value!r} — "
             "Alpha Vantage has no clean retail endpoint for it; use a dedicated data vendor instead."
@@ -109,6 +144,32 @@ class AlphaVantageProvider(DataProvider):
         params = {"function": "DIGITAL_CURRENCY_DAILY", "symbol": symbol, "market": market}
         payload = self._request(params)
         return self._parse_series(payload, "Time Series (Digital Currency Daily)", instrument, timeframe, has_volume=True)
+
+    def _fetch_proxied(self, instrument: str, timeframe: str, proxies: dict[str, str], kind: str) -> list[Candle]:
+        proxy_symbol = proxies.get(instrument)
+        if proxy_symbol is None:
+            raise ValueError(
+                f"no ETF proxy configured for {kind} {instrument!r} via Alpha Vantage — "
+                f"known proxies: {sorted(proxies)}. Alpha Vantage has no direct {kind} endpoint; "
+                "add a proxy mapping (if one exists you're confident in) or use a dedicated data vendor."
+            )
+        proxy_candles = self._fetch_equity(proxy_symbol, timeframe)
+        # Re-tag as the requested instrument (not the ETF ticker) so signals,
+        # risk sizing, and the journal all see what was actually asked for.
+        return [
+            Candle(
+                instrument=instrument,
+                asset_class=self.asset_class,
+                timeframe=c.timeframe,
+                time=c.time,
+                open=c.open,
+                high=c.high,
+                low=c.low,
+                close=c.close,
+                volume=c.volume,
+            )
+            for c in proxy_candles
+        ]
 
     def _split_pair(self, instrument: str) -> tuple[str, str]:
         if len(instrument) != 6:

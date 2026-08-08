@@ -22,6 +22,7 @@ live connection, replaying it candle-by-candle.
 import argparse
 import time
 
+from app.config import settings
 from app.data.provider_base import DataProvider
 from app.db.base import SessionLocal, init_db
 from app.db.models import AssetClass
@@ -31,6 +32,12 @@ from app.signals.indicator_engine import IndicatorEngine
 from app.signals.smc_ict import SMCICTEngine
 
 _TIMEFRAME_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "H1": 3600, "H4": 14400, "D1": 86400}
+# A feed is only "stale" once it's missed several of its own candle intervals —
+# not a fixed wall-clock number. A daily feed (D1) only produces one new candle
+# every ~86400s, so the global 60s default would mark it stale on cycle two and
+# the system would never trade; a 4x-interval buffer also comfortably absorbs a
+# long weekend on forex D1 without being so loose it hides a genuinely dead feed.
+_STALE_THRESHOLD_MULTIPLIER = 4
 
 
 def build_provider(source: str, data_dir: str | None, asset_class: AssetClass) -> DataProvider:
@@ -68,6 +75,9 @@ def main() -> None:
     execution = PaperAdapter(starting_balance=args.starting_balance)
     engines = [IndicatorEngine(asset_class=asset_class), SMCICTEngine(asset_class=asset_class)]
 
+    candle_seconds = _TIMEFRAME_SECONDS.get(args.timeframe, 3600)
+    feed_stale_seconds = max(settings.feed_stale_seconds, candle_seconds * _STALE_THRESHOLD_MULTIPLIER)
+
     orchestrator = Orchestrator(
         session_factory=SessionLocal,
         data_provider=provider,
@@ -75,10 +85,13 @@ def main() -> None:
         execution=execution,
         instrument=args.instrument,
         timeframe=args.timeframe,
+        feed_stale_seconds=feed_stale_seconds,
     )
 
-    candle_seconds = _TIMEFRAME_SECONDS.get(args.timeframe, 3600)
-    print(f"starting paper-trading loop for {args.instrument} {args.timeframe} (source={args.source})")
+    print(
+        f"starting paper-trading loop for {args.instrument} {args.timeframe} "
+        f"(source={args.source}, feed_stale_seconds={feed_stale_seconds})"
+    )
     try:
         while True:
             orchestrator.run_once()

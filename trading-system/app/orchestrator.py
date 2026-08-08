@@ -41,6 +41,7 @@ class Orchestrator:
         timeframe: str,
         risk_manager: RiskManager | None = None,
         lookback: int = 300,
+        feed_stale_seconds: int | None = None,
     ):
         self.session_factory = session_factory
         self.data_provider = data_provider
@@ -50,6 +51,13 @@ class Orchestrator:
         self.timeframe = timeframe
         self.risk_manager = risk_manager or RiskManager()
         self.lookback = lookback
+        # None means "use the global settings default" (app/data/feed_health.py).
+        # A daily-bar feed only produces a new candle once a day, so callers on
+        # D1/weekly timeframes must pass a wider threshold here — otherwise the
+        # default (tuned for fast intraday feeds) marks it stale immediately and
+        # the system never trades. See scripts/run_live_paper.py for how this is
+        # derived from the timeframe.
+        self.feed_stale_seconds = feed_stale_seconds
 
     def run_once(self) -> None:
         session: Session = self.session_factory()
@@ -85,7 +93,7 @@ class Orchestrator:
                 if trade_id and fill.filled_price is not None:
                     record_trade_close(session, trade_id, fill.filled_price)
 
-        if is_stale(session, self.instrument):
+        if is_stale(session, self.instrument, stale_after_seconds=self.feed_stale_seconds):
             log_decision(session, event_type="cycle_skipped", agent_id="orchestrator", instrument=self.instrument, payload={"reason": "feed_stale"})
             return
 

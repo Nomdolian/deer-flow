@@ -179,8 +179,16 @@ machine that sleeps — that's the whole point of the architecture.
 ### Live data without a broker: Alpha Vantage
 
 If you don't have an MT5/broker connection set up yet, `AlphaVantageProvider`
-gets real market data (forex, equities, or crypto majors) with just an API
-key — no broker account needed:
+gets real market data with just an API key — no broker account needed —
+across every asset class this system models:
+
+| Asset class | Route | Notes |
+|---|---|---|
+| forex, metals | `FX_DAILY` / `FX_INTRADAY` | metals as XAU/XAG "currency" pairs (XAUUSD, XAGUSD) |
+| stocks | `TIME_SERIES_DAILY` / `TIME_SERIES_INTRADAY` | |
+| crypto (major + meme) | `DIGITAL_CURRENCY_DAILY` | same endpoint for both — "major" vs "meme" is a risk-bucketing distinction, not a data-source one |
+| indices | equity endpoints via ETF proxy | `US30`→DIA, `NAS100`→QQQ, `SPX500`→SPY, `US2000`→IWM — a live, liquid proxy price, **not** the literal index/futures print |
+| commodities | equity endpoints via ETF proxy | `WTI`→USO, `NATURAL_GAS`→UNG only; anything else fails closed rather than guessing a ticker |
 
 ```bash
 # .env: ALPHA_VANTAGE_API_KEY=your-key (free tier at alphavantage.co/support/#api-key)
@@ -191,13 +199,23 @@ key — no broker account needed:
 
 The free tier only serves **daily** bars for forex and crypto (`--timeframe
 D1`) — the intraday FX/crypto endpoints return a "premium endpoint" error
-without a paid Alpha Vantage plan; equity intraday is available free but
-rate-limited. `AlphaVantageProvider` treats that as a hard failure rather
-than silently falling back to something else — same fail-closed rule as
-every other data path in this system. See
-`app/data/providers/alpha_vantage_provider.py` for the supported
-asset-class/timeframe combinations (indices/commodities aren't covered —
-Alpha Vantage has no clean retail endpoint for those).
+without a paid Alpha Vantage plan; equity intraday (and therefore the index/
+commodity ETF proxies) is available free but rate-limited.
+`AlphaVantageProvider` treats an unavailable endpoint as a hard failure
+rather than silently falling back to something else — same fail-closed rule
+as every other data path in this system. See
+`app/data/providers/alpha_vantage_provider.py` for exact routing.
+
+**On "24/7": only crypto actually is.** Forex/metals trade ~24/5 (closed
+weekends); equities, indices, and the commodity-ETF proxies trade only their
+exchange's regular hours. Outside those hours there is correctly no new
+candle — the feed-health monitor treats that as expected quiet, not a fault,
+provided its staleness threshold is wide enough for the timeframe in use.
+`scripts/run_live_paper.py` derives that threshold automatically (4× the
+candle interval, so D1 tolerates a long weekend without either sitting
+falsely "stale" forever or masking a genuinely dead feed) — pass
+`feed_stale_seconds` explicitly to `Orchestrator` if you build your own
+runner and skip that script.
 
 ## Mobile app
 
