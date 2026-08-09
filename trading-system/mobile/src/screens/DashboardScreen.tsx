@@ -4,7 +4,7 @@ import { FlatList, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "
 import { api } from "../api/client";
 import { Badge, Card, EmptyState, ErrorBanner, LoadingView, SectionTitle } from "../components/Common";
 import { useApiData } from "../hooks/useApiData";
-import type { OrderDTO } from "../api/types";
+import type { OpenPositionDTO } from "../api/types";
 import { colors, spacing } from "../theme";
 
 const POLL_MS = 15_000;
@@ -21,7 +21,10 @@ export default function DashboardScreen() {
     );
   }
 
-  const openPositions = (positions.data ?? []).filter((o) => o.status === "filled");
+  // No client-side filtering: /positions returns exactly the open set. The
+  // previous `status === "filled"` filter counted every trade that ever
+  // filled, so long-closed trades showed up here as live exposure.
+  const openPositions = positions.data ?? [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -40,28 +43,36 @@ export default function DashboardScreen() {
               </View>
             )}
             {positions.error && <ErrorBanner message={positions.error} />}
-            <SectionTitle>Recent orders</SectionTitle>
+            <SectionTitle>
+              Open positions{openPositions.length > 0 ? ` (${openPositions.length})` : ""}
+            </SectionTitle>
           </>
         }
-        renderItem={({ item }) => <OrderRow order={item} />}
-        ListEmptyComponent={!positions.error ? <EmptyState message="No orders yet. The server logs one here as soon as it fills." /> : null}
+        renderItem={({ item }) => <PositionRow position={item} />}
+        ListEmptyComponent={
+          !positions.error ? <EmptyState message="Flat — nothing open right now. Closed trades are in the Journal tab." /> : null
+        }
       />
     </SafeAreaView>
   );
 }
 
-function OrderRow({ order }: { order: OrderDTO }) {
-  const tone = order.direction === "long" ? "positive" : "negative";
+function PositionRow({ position }: { position: OpenPositionDTO }) {
+  const tone = position.direction === "long" ? "positive" : "negative";
   return (
     <Card>
       <View style={styles.rowBetween}>
-        <Text style={styles.instrument}>{order.instrument}</Text>
-        <Badge label={order.direction.toUpperCase()} tone={tone} />
+        <Text style={styles.instrument}>{position.instrument}</Text>
+        <Badge label={position.direction.toUpperCase()} tone={tone} />
       </View>
       <Text style={styles.meta}>
-        size {order.size.toFixed(2)} · entry {order.filled_price ?? "—"} · SL {order.stop_loss ?? "—"} · TP {order.take_profit ?? "—"}
+        size {position.size.toFixed(2)} · entry {position.filled_price ?? "—"} · SL {position.stop_loss ?? "—"} · TP{" "}
+        {position.take_profit ?? "—"}
       </Text>
-      <Text style={styles.timestamp}>{new Date(order.created_at).toLocaleString()}</Text>
+      <Text style={styles.meta}>
+        {position.strategy_id} · {position.asset_class}
+      </Text>
+      <Text style={styles.timestamp}>opened {new Date(position.opened_at).toLocaleString()}</Text>
     </Card>
   );
 }

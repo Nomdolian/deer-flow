@@ -1,6 +1,6 @@
 import type {
   KillSwitchStateDTO,
-  OrderDTO,
+  OpenPositionDTO,
   SignalDTO,
   StrategyDTO,
   StrategyPerformanceDTO,
@@ -63,7 +63,7 @@ async function request<T>(
 export const api = {
   health: (creds: ApiCredentials) => request<{ status: string }>(creds, "/health"),
 
-  positions: (creds: ApiCredentials) => request<OrderDTO[]>(creds, "/positions"),
+  positions: (creds: ApiCredentials) => request<OpenPositionDTO[]>(creds, "/positions"),
 
   signals: (creds: ApiCredentials) => request<SignalDTO[]>(creds, "/signals"),
 

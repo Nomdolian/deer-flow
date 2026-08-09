@@ -20,9 +20,12 @@ export interface SignalDTO {
   risk_decision: RiskDecisionSummary | null;
 }
 
-export interface OrderDTO {
+/** A position that is open right now — /positions returns only these. */
+export interface OpenPositionDTO {
   id: string;
   instrument: string;
+  asset_class: string;
+  strategy_id: string;
   direction: Direction;
   size: number;
   filled_price: number | null;
@@ -30,6 +33,7 @@ export interface OrderDTO {
   take_profit: number | null;
   status: string;
   created_at: string;
+  opened_at: string;
 }
 
 export interface TradeJournalDTO {
