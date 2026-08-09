@@ -142,6 +142,9 @@ class PaperAdapter(ExecutionAdapter):
                     take_profit=position.take_profit,
                     unrealized_pnl=unrealized,
                     client_order_id=position.client_order_id,
+                    # The simulator has no separate broker-side ticket; the
+                    # client order id doubles as the position identity.
+                    broker_position_id=position.client_order_id,
                 )
             )
         return snapshots

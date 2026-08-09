@@ -4,6 +4,7 @@ from app.config import settings
 from app.data.provider_base import DataProvider
 from app.db.models import AssetClass, WatchlistInstrument
 from app.execution.base import ExecutionAdapter
+from app.health.watchdog import ConnectivityWatchdog
 from app.orchestrator import Orchestrator
 from app.risk.manager import RiskManager
 from app.signals.base import SignalEngine
@@ -54,6 +55,7 @@ class WatchlistRunner:
         risk_manager: RiskManager | None = None,
         provider_factory: Callable[[str, AssetClass], DataProvider] | None = None,
         engines_factory: Callable[[AssetClass], list[SignalEngine]] | None = None,
+        watchdog: ConnectivityWatchdog | None = None,
     ):
         self.session_factory = session_factory
         self.execution = execution
@@ -62,8 +64,15 @@ class WatchlistRunner:
         self._engines_factory = engines_factory or _build_engines
         self._orchestrators: dict[str, Orchestrator] = {}
         self._instrument_asset_classes: dict[str, AssetClass] = {}
+        self.watchdog = watchdog
 
     def run_once(self) -> dict[str, dict]:
+        # Check the broker link before doing anything. A disconnected cycle
+        # must not be mistaken for "no signals today", and a prolonged outage
+        # has to trip the kill switch (Phase 0, item 3).
+        if self.watchdog is not None and not self.watchdog.check_connectivity():
+            return {"_portfolio": {"connected": False, "equity": None, "open_positions": None}}
+
         session = self.session_factory()
         try:
             rows = list_watchlist(session)
@@ -84,6 +93,7 @@ class WatchlistRunner:
             results[row.instrument] = {"enabled": row.enabled}
 
         results["_portfolio"] = {
+            "connected": True,
             "equity": self.execution.get_equity(),
             "open_positions": len(self.execution.get_open_positions()),
         }

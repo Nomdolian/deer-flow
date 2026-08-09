@@ -22,6 +22,10 @@ class OrderResult:
     status: str  # "filled" | "rejected" | "pending" | "error"
     filled_price: float | None = None
     error: str | None = None
+    # The broker's position identifier (MT5 position ticket). Durable identity
+    # for later modify/close — see OrderRecord.broker_position_id for why the
+    # comment field can't be trusted for this.
+    broker_position_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +38,7 @@ class OpenPositionSnapshot:
     take_profit: float
     unrealized_pnl: float
     client_order_id: str
+    broker_position_id: str | None = None
 
 
 class ExecutionAdapter(ABC):
@@ -57,3 +62,18 @@ class ExecutionAdapter(ABC):
 
     @abstractmethod
     def get_equity(self) -> float: ...
+
+    def is_connected(self) -> bool:
+        """Whether the adapter currently has a working broker connection.
+        Adapters with no connection to lose (the paper simulator) are always
+        connected. Used by the connectivity watchdog, which fails closed:
+        a prolonged disconnect engages the kill switch."""
+        return True
+
+    def is_tradeable(self, instrument: str) -> bool:
+        """Whether the venue will accept an order on this instrument right now.
+        This is how the system distinguishes "market closed" (expected quiet —
+        weekends on forex, a broker's crypto maintenance window) from "feed
+        broken" (a fault worth alerting on). Adapters that can't tell report
+        True and let the normal order path reject if wrong."""
+        return True

@@ -8,7 +8,7 @@ from app.data.provider_base import DataProvider
 from app.db.models import AssetClass, OrderRecord, SignalRecord, StrategyVersion, TradeJournalRecord
 from app.execution.base import ExecutionAdapter, OrderRequest
 from app.execution.paper_adapter import PaperAdapter
-from app.journal.service import record_trade_close, record_trade_open
+from app.journal.service import find_open_trade, record_trade_close, record_trade_open
 from app.killswitch.service import KillSwitchEngaged, assert_not_engaged
 from app.logging_utils import log_decision
 from app.notifications.service import notify_position_opened, notify_signal
@@ -16,8 +16,6 @@ from app.risk.correlation import correlation_group_for
 from app.risk.manager import RiskManager
 from app.risk.models import OpenPosition, PortfolioState
 from app.signals.base import SignalEngine
-
-_OPEN_TRADE_BY_CLIENT_ORDER_ID: dict[str, str] = {}  # client_order_id -> trade_journal id, in-process cache
 
 
 class Orchestrator:
@@ -98,9 +96,26 @@ class Orchestrator:
             self.execution.update_price(self.instrument, candles[-1].close)
             fills = self.execution.check_stops(self.instrument, candles[-1].low, candles[-1].high)
             for fill in fills:
-                trade_id = _OPEN_TRADE_BY_CLIENT_ORDER_ID.pop(fill.client_order_id, None)
-                if trade_id and fill.filled_price is not None:
-                    record_trade_close(session, trade_id, fill.filled_price)
+                if fill.filled_price is None:
+                    continue
+                trade = find_open_trade(session, client_order_id=fill.client_order_id)
+                if trade is not None:
+                    record_trade_close(session, trade.id, fill.filled_price)
+
+        # Market closed is NOT a fault. Forex/metals go untradeable over the
+        # weekend and crypto CFDs during a broker's maintenance window; both
+        # are expected. Checking this BEFORE the staleness check matters: a
+        # weekend produces a legitimately stale intraday feed, and treating
+        # that as a broken feed would alert every cycle all weekend.
+        if not self.execution.is_tradeable(self.instrument):
+            log_decision(
+                session,
+                event_type="cycle_skipped",
+                agent_id="orchestrator",
+                instrument=self.instrument,
+                payload={"reason": "market_closed"},
+            )
+            return
 
         if is_stale(session, self.instrument, stale_after_seconds=self.feed_stale_seconds):
             log_decision(session, event_type="cycle_skipped", agent_id="orchestrator", instrument=self.instrument, payload={"reason": "feed_stale"})
@@ -154,6 +169,7 @@ class Orchestrator:
             take_profit=signal.take_profit,
             status=order_result.status,
             broker=self.execution.name,
+            broker_position_id=order_result.broker_position_id,
             error=order_result.error,
             filled_at=datetime.now(UTC) if order_result.status == "filled" else None,
         )
@@ -177,8 +193,9 @@ class Orchestrator:
                 .first()
             )
             if signal_record is not None:
-                trade = record_trade_open(session, order_record, signal_record, result.size)
-                _OPEN_TRADE_BY_CLIENT_ORDER_ID[client_order_id] = trade.id
+                # The journal row is the durable position->trade link (looked
+                # up later via find_open_trade), so it survives a restart.
+                record_trade_open(session, order_record, signal_record, result.size)
             notify_position_opened(session, order_record)
 
     def _asset_class_for(self, instrument: str) -> AssetClass:

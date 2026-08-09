@@ -33,6 +33,43 @@ def record_trade_open(session: Session, order: OrderRecord, signal: SignalRecord
     return trade
 
 
+def find_open_trade(
+    session: Session, *, client_order_id: str | None = None, broker_position_id: str | None = None
+) -> TradeJournalRecord | None:
+    """Look up the still-open journal row for a position, by client order id or
+    broker position id.
+
+    This is deliberately a DB query rather than an in-process cache: the
+    mapping has to survive the process dying. On a laptop running 24/7 —
+    Windows Update reboots, lid closes, crashes — an in-memory dict means any
+    position open at that moment can never be matched back to its journal row
+    again, so its close would go unrecorded and the strategy's performance
+    stats would be silently wrong.
+    """
+    if client_order_id is None and broker_position_id is None:
+        raise ValueError("provide client_order_id or broker_position_id")
+
+    query = session.query(TradeJournalRecord).join(
+        OrderRecord, TradeJournalRecord.order_id == OrderRecord.id
+    ).filter(TradeJournalRecord.closed_at.is_(None))
+
+    if client_order_id is not None:
+        query = query.filter(OrderRecord.client_order_id == client_order_id)
+    if broker_position_id is not None:
+        query = query.filter(OrderRecord.broker_position_id == broker_position_id)
+
+    return query.order_by(TradeJournalRecord.opened_at.desc()).first()
+
+
+def list_open_trades(session: Session) -> list[TradeJournalRecord]:
+    return (
+        session.query(TradeJournalRecord)
+        .filter(TradeJournalRecord.closed_at.is_(None))
+        .order_by(TradeJournalRecord.opened_at)
+        .all()
+    )
+
+
 def record_trade_close(session: Session, trade_id: str, exit_price: float) -> TradeJournalRecord:
     trade = session.get(TradeJournalRecord, trade_id)
     if trade is None:

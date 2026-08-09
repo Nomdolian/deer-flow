@@ -168,4 +168,46 @@ def test_removed_instrument_with_no_open_position_stops_being_tracked():
     session.close()
 
     results = runner.run_once()
-    assert results == {"_portfolio": {"equity": 10_000.0, "open_positions": 0}}
+    assert results == {"_portfolio": {"connected": True, "equity": 10_000.0, "open_positions": 0}}
+
+
+def test_disconnected_broker_halts_the_whole_cycle_without_trading():
+    """A disconnected cycle must not be mistaken for "no setups today" — and
+    critically, must not place orders against data it can't verify."""
+    from app.health.watchdog import ConnectivityWatchdog
+
+    session_local = _session_factory()
+    session = session_local()
+    add_instrument(session, instrument="EURUSD", asset_class=AssetClass.forex, timeframe="H1", data_source="fake")
+    session.close()
+
+    provider = _StaticProvider(make_candles(80, instrument="EURUSD"))
+    execution = PaperAdapter(starting_balance=10_000)
+
+    class _DisconnectedAdapter:
+        """Wraps the paper adapter but reports the broker link as down."""
+
+        name = "disconnected"
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def is_connected(self):
+            return False
+
+        def __getattr__(self, item):
+            return getattr(self._inner, item)
+
+    adapter = _DisconnectedAdapter(execution)
+    runner = WatchlistRunner(
+        session_factory=session_local,
+        execution=adapter,
+        provider_factory=lambda ds, ac: provider,
+        engines_factory=_always_engines_factory,
+        watchdog=ConnectivityWatchdog(session_local, adapter),
+    )
+
+    results = runner.run_once()
+
+    assert results["_portfolio"]["connected"] is False
+    assert execution.get_open_positions() == [], "must not trade while disconnected"

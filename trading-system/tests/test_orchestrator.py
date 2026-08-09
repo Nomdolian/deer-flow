@@ -16,16 +16,19 @@ from tests.conftest import make_candles
 
 
 class _StaticProvider(DataProvider):
+    """Serves a fixed candle list. `candles` is public and reassignable so a
+    test can advance the feed (e.g. to breach a stop) mid-run."""
+
     name = "static"
 
     def __init__(self, candles: list[Candle]):
-        self._candles = candles
+        self.candles = candles
 
     def historical(self, instrument, timeframe, limit):
-        return self._candles[-limit:]
+        return self.candles[-limit:]
 
     def latest(self, instrument, timeframe):
-        return self._candles[-1] if self._candles else None
+        return self.candles[-1] if self.candles else None
 
 
 class _AlwaysSignalEngine(SignalEngine):
@@ -238,19 +241,7 @@ def test_disabled_instrument_still_gets_stop_loss_closed():
     base_candles = make_candles(80)
     execution = PaperAdapter(starting_balance=10_000, spread_pct=0, slippage_pct=0)
 
-    class _MutableProvider(DataProvider):
-        name = "mutable"
-
-        def __init__(self, candles: list[Candle]):
-            self.candles = candles
-
-        def historical(self, instrument, timeframe, limit):
-            return self.candles[-limit:]
-
-        def latest(self, instrument, timeframe):
-            return self.candles[-1] if self.candles else None
-
-    provider = _MutableProvider(base_candles)
+    provider = _StaticProvider(base_candles)
     orchestrator = Orchestrator(
         session_factory=session_local,
         data_provider=provider,
@@ -317,3 +308,67 @@ def test_shared_execution_tags_open_positions_with_their_own_asset_class():
     tagged = {p.instrument: p.asset_class for p in portfolio.open_positions}
     assert tagged["EURUSD"] == AssetClass.forex
     assert tagged["BTCUSD"] == AssetClass.crypto_major
+
+
+def test_open_trade_is_matched_to_its_journal_row_after_a_process_restart():
+    """The bug this guards: the position->trade mapping used to live in a
+    module-level dict, so a restart (Windows Update reboot, crash, lid close)
+    orphaned every open position from its journal row — its close would go
+    unrecorded and strategy stats would be silently wrong. The mapping must be
+    a DB lookup that survives a fresh process."""
+    from app.journal.service import find_open_trade
+    from app.orchestrator import Orchestrator as FreshOrchestrator
+
+    session_local = _session_factory()
+    candles = make_candles(80, instrument="EURUSD")
+    provider = _StaticProvider(candles)
+    execution = PaperAdapter(starting_balance=10_000, spread_pct=0, slippage_pct=0)
+
+    orchestrator = Orchestrator(
+        session_factory=session_local,
+        data_provider=provider,
+        engines=[_AlwaysSignalEngine()],
+        execution=execution,
+        instrument="EURUSD",
+        timeframe="H1",
+    )
+    orchestrator.run_once()
+
+    position = execution.get_open_positions()[0]
+
+    # Simulate a restart: brand-new Orchestrator instance, nothing carried over
+    # in process memory. Only the DB persists.
+    session = session_local()
+    trade = find_open_trade(session, client_order_id=position.client_order_id)
+    assert trade is not None, "open trade must be findable from the DB alone"
+    session.close()
+
+    restarted = FreshOrchestrator(
+        session_factory=session_local,
+        data_provider=provider,
+        engines=[_AlwaysSignalEngine()],
+        execution=execution,
+        instrument="EURUSD",
+        timeframe="H1",
+    )
+
+    stop_candle = Candle(
+        instrument="EURUSD",
+        asset_class=AssetClass.forex,
+        timeframe="H1",
+        time=candles[-1].time + timedelta(hours=1),
+        open=position.entry_price,
+        high=position.entry_price + 0.0005,
+        low=position.stop_loss - 0.0001,
+        close=position.entry_price,
+        volume=100.0,
+    )
+    provider.candles = [*candles, stop_candle]
+
+    restarted.run_once()
+
+    session = session_local()
+    closed = session.get(type(trade), trade.id)
+    assert closed.closed_at is not None, "the close must be journaled after a restart"
+    assert closed.pnl is not None
+    session.close()

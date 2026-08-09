@@ -101,6 +101,13 @@ class OrderRecord(Base):
     take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String, default="pending")
     broker: Mapped[str] = mapped_column(String)
+    # The broker's own position identifier (MT5 position ticket). This is the
+    # ONLY reliable way to find our position again: MT5 brokers frequently
+    # strip or rewrite the order `comment` field, so matching on a
+    # comment-embedded client_order_id silently fails on live accounts.
+    # Persisted (not held in memory) so a restart can still close/modify and
+    # reconcile positions it opened before going down.
+    broker_position_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
