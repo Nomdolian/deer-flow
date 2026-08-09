@@ -5,7 +5,11 @@ from app.db.models import AssetClass, RiskDecisionRecord, SignalRecord, Strategy
 from app.killswitch.service import engage as engage_kill_switch
 from app.killswitch.service import is_engaged as kill_switch_engaged
 from app.logging_utils import log_decision
-from app.notifications.service import DAILY_LOSS_WARNING_RATIO, notify_daily_loss_approaching
+from app.notifications.service import (
+    DAILY_LOSS_WARNING_RATIO,
+    notify_daily_loss_approaching,
+    notify_strategy_paused,
+)
 from app.risk.correlation import correlation_group_for
 from app.risk.models import PortfolioState, RiskCheckResult
 from app.signals.base import Signal
@@ -46,7 +50,11 @@ class RiskManager:
 
         strategy_version = self._get_strategy_version(session, signal)
         if strategy_version is not None and strategy_version.is_paused:
-            return RiskCheckResult(accepted=False, reason="strategy_paused_consecutive_losses")
+            # Paused strategies stay paused until a human resumes them (see
+            # resume_strategy). The cause — consecutive losses or degraded
+            # live expectancy — is in the decision log; the reject reason
+            # deliberately doesn't guess which.
+            return RiskCheckResult(accepted=False, reason="strategy_paused")
 
         if portfolio.daily_starting_equity > 0:
             daily_loss_pct = -portfolio.daily_realized_pnl / portfolio.daily_starting_equity
@@ -169,7 +177,14 @@ class RiskManager:
 
 def record_trade_result(session: Session, strategy_id: str, version: int, *, is_loss: bool, breaker_threshold: int | None = None) -> StrategyVersion | None:
     """Mechanical, hard-coded consecutive-loss circuit breaker (Phase 3, item 6).
-    Called by the journal service when a trade closes — not by the LLM layer."""
+    Called by the journal service when a trade closes — not by the LLM layer.
+
+    The pause is deliberately latching: a win resets the counter, but nothing
+    here clears `is_paused`, because a paused strategy takes no trades and so
+    can never produce the win that would clear it. Resuming is a human
+    decision — see resume_strategy() and POST /strategies/{id}/{v}/resume.
+    Same philosophy as the kill switch not auto-clearing after an outage.
+    """
     threshold = breaker_threshold or settings.consecutive_loss_breaker
     strategy_version = (
         session.query(StrategyVersion).filter_by(strategy_id=strategy_id, version=version).one_or_none()
@@ -191,8 +206,50 @@ def record_trade_result(session: Session, strategy_id: str, version: int, *, is_
                     "consecutive_losses": strategy_version.consecutive_losses,
                 },
             )
+            notify_strategy_paused(
+                session,
+                strategy_id=strategy_id,
+                version=version,
+                reason=f"{strategy_version.consecutive_losses} consecutive losses",
+            )
     else:
         strategy_version.consecutive_losses = 0
 
     session.commit()
+    return strategy_version
+
+
+def resume_strategy(session: Session, strategy_id: str, version: int, *, resumed_by: str) -> StrategyVersion | None:
+    """Clear a latched pause so the strategy can trade again.
+
+    Resets the consecutive-loss counter too: leaving it at the threshold would
+    re-trip the breaker on the very next loss, which isn't a resume, it's a
+    single-trade reprieve.
+
+    Returns None if that strategy version doesn't exist. Idempotent — resuming
+    an already-active strategy is a no-op that still logs, so the operator's
+    intent is on the record either way.
+    """
+    strategy_version = (
+        session.query(StrategyVersion).filter_by(strategy_id=strategy_id, version=version).one_or_none()
+    )
+    if strategy_version is None:
+        return None
+
+    was_paused = strategy_version.is_paused
+    strategy_version.is_paused = False
+    strategy_version.consecutive_losses = 0
+    session.commit()
+
+    log_decision(
+        session,
+        event_type="strategy_resumed",
+        agent_id="risk_manager",
+        payload={
+            "strategy_id": strategy_id,
+            "version": version,
+            "was_paused": was_paused,
+            "resumed_by": resumed_by,
+        },
+    )
     return strategy_version

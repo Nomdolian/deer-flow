@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 
-from app.db.models import AssetClass, Direction, StrategyVersion
+from app.db.models import AssetClass, DecisionLog, Direction, StrategyVersion
 from app.killswitch.service import is_engaged
-from app.risk.manager import RiskManager, record_trade_result
+from app.risk.manager import RiskManager, record_trade_result, resume_strategy
 from app.risk.models import OpenPosition, PortfolioState
 from app.signals.base import Signal
 
@@ -128,7 +128,7 @@ def test_consecutive_loss_breaker_pauses_strategy(db_session):
     signal = make_signal(strategy_id="s1", version=1)
     result = manager.evaluate(db_session, signal, empty_portfolio())
     assert not result.accepted
-    assert result.reason == "strategy_paused_consecutive_losses"
+    assert result.reason == "strategy_paused"
 
 
 def test_consecutive_loss_counter_resets_on_win(db_session):
@@ -143,3 +143,89 @@ def test_consecutive_loss_counter_resets_on_win(db_session):
     db_session.refresh(strategy)
     assert strategy.consecutive_losses == 0
     assert not strategy.is_paused
+
+
+def test_paused_strategy_never_unpauses_itself(db_session):
+    """The regression this guards: the breaker latches, and a paused strategy
+    takes no trades, so no win can ever arrive to clear it. Left unfixed, the
+    system silently stops trading forever."""
+    strategy = StrategyVersion(strategy_id="s3", version=1, asset_class=AssetClass.forex)
+    db_session.add(strategy)
+    db_session.commit()
+
+    for _ in range(4):
+        record_trade_result(db_session, "s3", 1, is_loss=True, breaker_threshold=4)
+    db_session.refresh(strategy)
+    assert strategy.is_paused
+
+    # Even a win (however it arrived — a manual close, say) must not silently
+    # re-arm the strategy behind the operator's back.
+    record_trade_result(db_session, "s3", 1, is_loss=False, breaker_threshold=4)
+    db_session.refresh(strategy)
+    assert strategy.is_paused
+    assert strategy.consecutive_losses == 0
+
+
+def test_resume_strategy_clears_pause_and_counter(db_session):
+    strategy = StrategyVersion(strategy_id="s4", version=1, asset_class=AssetClass.forex)
+    db_session.add(strategy)
+    db_session.commit()
+
+    for _ in range(4):
+        record_trade_result(db_session, "s4", 1, is_loss=True, breaker_threshold=4)
+    db_session.refresh(strategy)
+    assert strategy.is_paused
+
+    resumed = resume_strategy(db_session, "s4", 1, resumed_by="test")
+    assert resumed is not None
+    assert not resumed.is_paused
+    # Counter must reset too, or the next single loss re-trips the breaker.
+    assert resumed.consecutive_losses == 0
+
+    manager = RiskManager()
+    result = manager.evaluate(db_session, make_signal(strategy_id="s4", version=1), empty_portfolio())
+    assert result.accepted
+
+
+def test_resume_strategy_is_logged_and_idempotent(db_session):
+    strategy = StrategyVersion(strategy_id="s5", version=1, asset_class=AssetClass.forex)
+    db_session.add(strategy)
+    db_session.commit()
+
+    resume_strategy(db_session, "s5", 1, resumed_by="operator")
+    resume_strategy(db_session, "s5", 1, resumed_by="operator")
+
+    events = db_session.query(DecisionLog).filter_by(event_type="strategy_resumed").all()
+    assert len(events) == 2
+    assert events[0].payload["resumed_by"] == "operator"
+    # Resuming an already-active strategy is a no-op, recorded as such.
+    assert events[1].payload["was_paused"] is False
+
+
+def test_resume_unknown_strategy_returns_none(db_session):
+    assert resume_strategy(db_session, "does-not-exist", 1, resumed_by="test") is None
+
+
+def test_auto_pause_pushes_a_notification(db_session, monkeypatch):
+    """A latching pause the operator isn't told about is indistinguishable from
+    the system quietly dying."""
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        "app.risk.manager.notify_strategy_paused",
+        lambda session, **kwargs: sent.append(kwargs),
+    )
+
+    strategy = StrategyVersion(strategy_id="s6", version=1, asset_class=AssetClass.forex)
+    db_session.add(strategy)
+    db_session.commit()
+
+    for _ in range(4):
+        record_trade_result(db_session, "s6", 1, is_loss=True, breaker_threshold=4)
+
+    assert len(sent) == 1
+    assert sent[0]["strategy_id"] == "s6"
+    assert "consecutive losses" in sent[0]["reason"]
+
+    # Further losses must not re-notify — the strategy is already paused.
+    record_trade_result(db_session, "s6", 1, is_loss=True, breaker_threshold=4)
+    assert len(sent) == 1

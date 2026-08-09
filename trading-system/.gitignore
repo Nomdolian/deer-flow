@@ -4,5 +4,11 @@ __pycache__/
 .env
 .pytest_cache/
 .ruff_cache/
+# Anchored: an unanchored "data/" also matches app/data/, which is a real
+# package — that mistake silently kept 7 source files out of every commit once.
 /data/
 *.egg-info/
+# FREE_SETUP.md tells you to put the SQLite DB in the repo root, so it needs
+# ignoring — a trade journal with your account's history is not repo content.
+*.db
+logs/

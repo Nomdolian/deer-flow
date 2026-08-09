@@ -341,6 +341,37 @@ execution path):
   (`app/llm_analyst/mistake_report.py`) — a recommendation logged for you to
   review, never an auto-applied rule change.
 
+### A paused strategy stays paused until you resume it
+
+Both automatic pauses — the consecutive-loss breaker and the weekly
+edge-degradation rule — **latch**. They do not clear themselves, and that is
+deliberate: a paused strategy takes no trades, so no winning trade can ever
+arrive to un-pause it, and a system that silently re-armed itself after an
+unexplained losing streak would hide the streak from you. Same reasoning as
+the kill switch not auto-clearing after an outage.
+
+That makes two things mandatory, and both exist:
+
+- **You get told.** A push notification fires on the pause transition (once,
+  not on every subsequent loss), and `strategy_auto_paused` /
+  `strategy_weighting_updated` land in the decision log with the cause.
+- **You can resume.** The Strategies tab in the mobile app shows a PAUSED
+  badge with a resume control, or:
+
+  ```bash
+  curl -X POST -H "x-api-key: $KEY" -H "x-totp-code: 123456" \
+    http://localhost:8000/strategies/smc_ict_structure/1/resume
+  ```
+
+  TOTP-gated, like kill-switch disengage — it re-enables risk-taking after an
+  automatic halt. Resuming resets the consecutive-loss counter too; leaving it
+  at the threshold would re-trip the breaker on the very next loss, which is a
+  one-trade reprieve rather than a resume.
+
+Check for this whenever the system has gone quiet: `GET /strategies` shows
+`is_paused` per version, and rejected signals are logged with reason
+`strategy_paused`.
+
 ## Mobile app
 
 ```bash

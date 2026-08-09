@@ -347,6 +347,7 @@ Check `logs\` and the Journal tab for why, then re-enable from the app.
 | `ModuleNotFoundError` | venv not active — run `.venv\Scripts\Activate.ps1` |
 | `MT5 initialize() failed` | Terminal not running/logged in, or algo trading off (Step 2) |
 | Nothing ever trades | Wrong symbol names — re-run Step 7; or the market is closed; or `doctor` shows the kill switch engaged |
+| It traded for a while, then stopped | A strategy hit the consecutive-loss breaker and is **paused**. This latches on purpose. Check the Strategies tab for a PAUSED badge, read why in the journal, then resume it there (TOTP-gated) |
 | `cannot open the SQLite file` | Path problem — `doctor` prints the correct slash syntax |
 | Phone can't connect | Different WiFi, or firewall — re-run Step 11's script |
 

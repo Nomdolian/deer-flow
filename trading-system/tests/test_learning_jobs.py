@@ -114,6 +114,34 @@ def test_weekly_review_pauses_a_strategy_whose_live_edge_has_collapsed(db_sessio
     assert strategy.is_paused
 
 
+def test_weekly_review_pause_notifies_once(db_session, monkeypatch):
+    """The edge-degradation pause latches like the consecutive-loss breaker, so
+    it has to reach the operator's phone — and only on the transition."""
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        "app.journal.stats.notify_strategy_paused",
+        lambda session, **kwargs: sent.append(kwargs),
+    )
+    db_session.add(
+        StrategyVersion(
+            strategy_id="smc_ict_structure",
+            version=1,
+            asset_class=AssetClass.forex,
+            backtest_expectancy_r=1.0,
+        )
+    )
+    db_session.commit()
+    for _ in range(25):
+        _make_trade(db_session, r_multiple=-0.5)
+
+    run_weekly_review(db_session)
+    assert len(sent) == 1
+    assert "baseline" in sent[0]["reason"]
+
+    run_weekly_review(db_session)  # already paused — no second alert
+    assert len(sent) == 1
+
+
 def test_mistake_report_with_no_trades_skips_the_llm_call(db_session):
     analyst = _FakeAnalyst()
     report = run_mistake_report(db_session, analyst)

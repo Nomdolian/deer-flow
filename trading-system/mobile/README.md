@@ -26,7 +26,10 @@ executed, that's server-side (`../app/signals`, `../app/risk`,
 - **Journal** — the trade journal (open + closed trades, R multiple, P&L,
   post-trade classification).
 - **Strategies** — per-strategy-version state: active/paused, size
-  multiplier, consecutive losses, backtested baseline.
+  multiplier, consecutive losses, backtested baseline. Automatic pauses latch
+  (they never clear themselves), so this tab is also where you resume a paused
+  strategy — TOTP-gated, since it re-enables risk-taking after an automatic
+  halt.
 - **Kill Switch** — one-tap engage (no second factor — halting is always safe
   to make easy); disengage requires the current TOTP code when the server has
   `API_TOTP_SECRET` configured.

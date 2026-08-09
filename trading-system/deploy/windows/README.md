@@ -211,6 +211,20 @@ disconnect and does *not* auto-clear it. That's intentional — a system that
 silently resumed after an unexplained outage would hide the outage from you.
 Re-enable from the mobile app (TOTP-gated) once you've checked what happened.
 
+**"It stopped taking trades and the kill switch isn't on."** Check the
+Strategies tab (or `GET /strategies`) for a PAUSED badge. The consecutive-loss
+breaker and the weekly edge-degradation rule both latch by design and won't
+clear themselves. You get a push notification when it happens; resume from the
+Strategies tab, or:
+
+```powershell
+curl.exe -X POST -H "x-api-key: $key" -H "x-totp-code: 123456" `
+  http://localhost:8000/strategies/smc_ict_structure/1/resume
+```
+
+Look at *why* it paused first — `strategy_auto_paused` in the decision log, and
+the journal for the losing run — before you resume it.
+
 ## Before you fund it
 
 - MT5 credentials in `.env` only; never committed. `.gitignore` covers it.

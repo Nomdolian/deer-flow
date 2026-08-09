@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import StrategyVersion, TradeJournalRecord
 from app.logging_utils import log_decision
+from app.notifications.service import notify_strategy_paused
 
 MIN_SAMPLE_SIZE = 20  # statistically meaningful sample before any mechanical action
 
@@ -89,7 +90,9 @@ def apply_mechanical_weighting(session: Session, stats: StrategyStats) -> str:
     ratio = stats.expectancy_r / baseline
     action = "expectancy_at_or_above_baseline"
 
+    newly_paused = False
     if ratio < 0.3:
+        newly_paused = not strategy_version.is_paused
         strategy_version.is_paused = True
         action = "paused_edge_degraded"
     elif ratio < 0.6:
@@ -114,5 +117,14 @@ def apply_mechanical_weighting(session: Session, stats: StrategyStats) -> str:
                 "ratio": ratio,
                 "action": action,
             },
+        )
+    if newly_paused:
+        # Like the consecutive-loss breaker, this pause latches until a human
+        # resumes it, so it has to be visible when it happens.
+        notify_strategy_paused(
+            session,
+            strategy_id=stats.strategy_id,
+            version=stats.version,
+            reason=f"live expectancy {stats.expectancy_r:.2f}R vs {baseline:.2f}R baseline",
         )
     return action

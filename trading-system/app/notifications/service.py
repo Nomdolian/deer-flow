@@ -112,6 +112,18 @@ def notify_kill_switch_triggered(session: Session, *, reason: str, triggered_by:
     )
 
 
+def notify_strategy_paused(session: Session, *, strategy_id: str, version: int, reason: str) -> None:
+    """A paused strategy stops taking trades and does NOT un-pause itself, so
+    this notification is the only thing standing between "the breaker did its
+    job" and "the bot went quiet three weeks ago and nobody noticed"."""
+    send_push(
+        session,
+        title="Strategy paused",
+        body=f"{strategy_id} v{version} paused: {reason}. It will not take new trades until you resume it.",
+        data={"type": "strategy_paused", "strategy_id": strategy_id, "version": version, "reason": reason},
+    )
+
+
 def notify_feed_health_issue(session: Session, *, instrument: str) -> None:
     if _already_notified_today(session, "feed_stale_pushed", instrument=instrument):
         return

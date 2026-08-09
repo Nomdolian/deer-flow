@@ -77,6 +77,15 @@ export const api = {
 
   strategies: (creds: ApiCredentials) => request<StrategyDTO[]>(creds, "/strategies"),
 
+  // TOTP-gated: resuming a paused strategy re-enables risk-taking, same class
+  // of action as disengaging the kill switch.
+  resumeStrategy: (creds: ApiCredentials, strategyId: string, version: number, totpCode: string) =>
+    request<{ strategy_id: string; version: number; is_paused: boolean; consecutive_losses: number }>(
+      creds,
+      `/strategies/${encodeURIComponent(strategyId)}/${version}/resume`,
+      { method: "POST", totpCode }
+    ),
+
   strategyPerformance: (creds: ApiCredentials, strategyId: string, version: number, instrument: string) =>
     request<StrategyPerformanceDTO>(
       creds,
