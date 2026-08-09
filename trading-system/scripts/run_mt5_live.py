@@ -56,6 +56,13 @@ def main() -> None:
         "--max-consecutive-execution-errors", type=int, default=DEFAULT_MAX_CONSECUTIVE_EXECUTION_ERRORS
     )
     parser.add_argument(
+        "--max-cycles",
+        type=int,
+        default=0,
+        help="Stop after this many cycles instead of running forever. Use it to smoke-test a fresh "
+        "install (--max-cycles 3) without leaving a process running. 0 means run until stopped.",
+    )
+    parser.add_argument(
         "--skip-reconcile",
         action="store_true",
         help="Skip startup reconciliation. Only for debugging — without it, trades that closed while "
@@ -114,7 +121,9 @@ def main() -> None:
     )
     runner = WatchlistRunner(session_factory=SessionLocal, execution=execution, watchdog=watchdog)
 
-    print(f"loop started, polling every {args.poll_seconds}s — Ctrl+C to stop")
+    limit = f", stopping after {args.max_cycles} cycle(s)" if args.max_cycles else " — Ctrl+C to stop"
+    print(f"loop started, polling every {args.poll_seconds}s{limit}")
+    cycle = 0
     try:
         while True:
             try:
@@ -143,6 +152,10 @@ def main() -> None:
                     session.close()
                 print(f"cycle error (continuing): {exc}")
 
+            cycle += 1
+            if args.max_cycles and cycle >= args.max_cycles:
+                print(f"completed {cycle} cycle(s), stopping as asked")
+                return
             time.sleep(args.poll_seconds)
     except KeyboardInterrupt:
         print("stopped")

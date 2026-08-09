@@ -276,6 +276,16 @@ symbol.
 
 # Step 10 — Start trading (demo)
 
+Smoke-test it first — three cycles, then it exits on its own:
+
+```powershell
+python -m scripts.run_mt5_live --poll-seconds 5 --max-cycles 3
+```
+
+You should see it connect, reconcile, name your instruments, and print an
+`equity=... open_positions=...` line per cycle. If that looks right, start it
+for real:
+
 ```powershell
 python -m scripts.run_mt5_live --poll-seconds 30
 ```

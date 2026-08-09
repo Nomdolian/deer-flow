@@ -203,3 +203,27 @@ def test_prolonged_outage_engages_the_kill_switch_and_stops_trading(session_loca
     fake_mt5.state.broker_connected = True
     runner.run_once()
     assert execution.get_open_positions() == [], "must not trade while the kill switch is engaged"
+
+
+def test_runner_stops_after_max_cycles(session_local, monkeypatch, capsys):
+    """--max-cycles exists so a fresh install can be smoke-tested without
+    leaving a process running. Without a bound the runner loops forever, which
+    makes "did my setup work?" awkward to answer."""
+    import sys
+
+    from app.db.base import Base as _Base
+    from scripts import run_mt5_live
+
+    fake_mt5.add_symbol("EURUSD", 1.10)
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    _Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+
+    monkeypatch.setattr(run_mt5_live, "SessionLocal", factory)
+    monkeypatch.setattr(run_mt5_live, "init_db", lambda: None)
+    monkeypatch.setattr(run_mt5_live, "MT5Adapter", lambda: MT5Adapter(mt5_module=fake_mt5))
+    monkeypatch.setattr(sys, "argv", ["run_mt5_live", "--poll-seconds", "0", "--max-cycles", "2"])
+
+    run_mt5_live.main()  # must return rather than loop forever
+
+    assert "completed 2 cycle(s)" in capsys.readouterr().out

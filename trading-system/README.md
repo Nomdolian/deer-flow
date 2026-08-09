@@ -249,6 +249,7 @@ uv pip install -e ".[mt5]"          # Windows only; MT5's Python API has no Linu
 python -m scripts.doctor            # checks everything and tells you what to fix
 python -m scripts.check_mt5         # broker symbol names + contract terms + your size in lots
 python -m scripts.verify_mt5_trade  # places and closes ONE minimum-size demo trade
+python -m scripts.run_mt5_live --max-cycles 3   # smoke-test: 3 cycles, then exits
 python -m scripts.run_mt5_live      # the 24/7 runner
 ```
 

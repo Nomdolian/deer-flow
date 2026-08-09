@@ -92,6 +92,12 @@ def test_size_below_the_broker_minimum_is_rejected_not_rounded_up():
 
     assert result.status == "rejected"
     assert "size_below_broker_minimum" in result.error
+    # The message must quote the UNROUNDED requirement. Quoting the floored
+    # value prints "needs 0 lots", which says nothing about how far short the
+    # account is — and that shortfall is the whole decision the operator faces.
+    assert "0.005 lots" in result.error
+    assert "minimum is 0.01" in result.error
+    assert "2.0x larger" in result.error
     assert fake_mt5.state.positions == {}
 
 

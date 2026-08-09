@@ -281,9 +281,16 @@ class MT5Adapter(ExecutionAdapter):
             # Rounding up to the broker's minimum would take more risk than the
             # risk manager approved. Skipping the trade is the correct answer:
             # this account is too small to express this setup at this risk.
+            #
+            # Report the UNROUNDED requirement, not `lots` — that has already
+            # been floored to the lot step and is usually 0, which tells you
+            # nothing about how far short you are.
+            wanted = size_units / spec.contract_size
+            shortfall = spec.volume_min / wanted if wanted > 0 else float("inf")
             return None, (
-                f"size_below_broker_minimum: need {lots:.8f} lots, "
-                f"broker minimum is {spec.volume_min} (raise equity or risk per trade)"
+                f"size_below_broker_minimum: this setup needs {wanted:.6g} lots but the broker's minimum "
+                f"is {spec.volume_min:g} ({shortfall:.1f}x larger) — the account is too small to trade "
+                f"{instrument} at this risk per trade"
             )
         # Clamping down only reduces risk, so it's safe to proceed.
         return min(lots, spec.volume_max), None
