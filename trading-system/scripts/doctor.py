@@ -136,21 +136,36 @@ def check_database(doc: Doctor) -> None:
         doc.fail(f"could not load the DB layer: {exc}", 'uv pip install -e ".[dev]"')
         return
 
+    from app.config import settings
+
+    is_sqlite = settings.database_url.startswith("sqlite")
+
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:  # noqa: BLE001
-        doc.fail(
-            f"cannot connect to Postgres: {type(exc).__name__}",
-            "Start it, then re-run:\n"
-            "  docker compose up -d postgres\n"
-            "If Docker is blocked on your machine, install Postgres natively and point\n"
-            "DATABASE_URL in .env at it.\n"
-            f"Currently trying: {_redact_dsn()}",
-        )
+        if is_sqlite:
+            doc.fail(
+                f"cannot open the SQLite file: {type(exc).__name__}",
+                "Usually a bad path. An ABSOLUTE path needs FOUR slashes:\n"
+                "  Windows:   DATABASE_URL=sqlite:///C:/trading-system/trading.db\n"
+                "  Mac/Linux: DATABASE_URL=sqlite:////home/you/trading-system/trading.db\n"
+                "A relative path (three slashes) is fine too: sqlite:///./trading.db\n"
+                "Also check the folder exists and is writable.\n"
+                f"Currently trying: {_redact_dsn()}",
+            )
+        else:
+            doc.fail(
+                f"cannot connect to Postgres: {type(exc).__name__}",
+                "Start it, then re-run:\n"
+                "  docker compose up -d postgres\n"
+                "Or switch to SQLite (no install, no server) in .env:\n"
+                "  DATABASE_URL=sqlite:///./trading.db\n"
+                f"Currently trying: {_redact_dsn()}",
+            )
         return
 
-    doc.ok("Postgres reachable")
+    doc.ok("SQLite file opened" if is_sqlite else "Postgres reachable")
 
     expected = {
         "orders",

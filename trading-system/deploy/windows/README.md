@@ -32,6 +32,12 @@ and network. The code is identical either way.
 
 ## Setup
 
+> **Setting this up for the first time?** Use
+> **[FREE_SETUP.md](./FREE_SETUP.md)** instead — a complete zero-cost
+> walkthrough (MT5 demo account, SQLite instead of Postgres, Expo Go for the
+> phone, no paid API keys) with troubleshooting. The steps below are the
+> condensed reference version.
+
 ### 1. Prerequisites on the Windows machine
 
 - **MT5 terminal** installed and logged into your account

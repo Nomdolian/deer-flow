@@ -234,10 +234,14 @@ runner and skip that script.
 ## Live trading through your own MT5 terminal (24/5 forex, 24/7 crypto)
 
 This is the setup for actually trading: MT5 on a Windows machine, this system
-attached to it, running continuously. **Full step-by-step in
-[`deploy/windows/README.md`](./deploy/windows/README.md)** — including the
-Windows power/Task-Scheduler configuration and an honest assessment of
-laptop-vs-VPS.
+attached to it, running continuously.
+
+- **[`deploy/windows/FREE_SETUP.md`](./deploy/windows/FREE_SETUP.md)** —
+  complete zero-cost walkthrough (MT5 demo + SQLite + Expo Go, no paid
+  services). Start here.
+- **[`deploy/windows/README.md`](./deploy/windows/README.md)** — the reference
+  runbook: 24/7 configuration, operating it, and an honest laptop-vs-VPS
+  assessment.
 
 ```powershell
 uv pip install -e ".[mt5]"        # Windows only; MT5's Python API has no Linux/macOS build
