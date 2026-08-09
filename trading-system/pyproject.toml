@@ -20,7 +20,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mt5 = ["MetaTrader5>=5.0.45"]
+# 5.0.5509 is the oldest release publishing cp312+ wheels (verified against
+# PyPI). A looser floor lets a resolver pick an ancient version that has no
+# wheel for modern Python and fails with a confusing ABI-tag error.
+# Windows-only: every MetaTrader5 wheel is win_amd64, so this extra cannot be
+# installed on Linux/macOS — use the [dev] extra there.
+mt5 = ["MetaTrader5>=5.0.5509"]
 crypto = ["ccxt>=4.4.0"]
 dev = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "ruff>=0.7.0"]
 

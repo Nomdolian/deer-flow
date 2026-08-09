@@ -27,7 +27,11 @@ REM Timestamped log per run so a crash loop doesn't overwrite the evidence.
 set LOGSTAMP=%date:~-4%%date:~3,2%%date:~0,2%_%time:~0,2%%time:~3,2%%time:~6,2%
 set LOGSTAMP=%LOGSTAMP: =0%
 
-call .venv\Scripts\python.exe -m scripts.run_mt5_live --poll-seconds %POLL_SECONDS% ^
+REM -u keeps stdout unbuffered. Insurance rather than a fix for an observed
+REM bug: a process that prints one short line every 30s can otherwise sit
+REM below the block-buffer threshold, leaving this log looking empty while the
+REM system is actually working fine.
+call .venv\Scripts\python.exe -u -m scripts.run_mt5_live --poll-seconds %POLL_SECONDS% ^
   >> "%LOG_DIR%\runner_%LOGSTAMP%.log" 2>&1
 
 echo [%date% %time%] runner exited with code %errorlevel%, restarting in %RESTART_DELAY_SECONDS%s >> "%LOG_DIR%\supervisor.log"

@@ -39,9 +39,11 @@ review) and a Windows VPS. Neither is needed for the system to trade.
 
 Install these four, all free:
 
-1. **Python 3.12** — [python.org/downloads](https://www.python.org/downloads/)
+1. **Python 3.12 or 3.13** — [python.org/downloads](https://www.python.org/downloads/)
    → During install, **tick "Add python.exe to PATH"**. This one checkbox
    causes most setup problems when missed.
+   → Either version works (MetaTrader5 publishes wheels for both). Avoid 3.14
+   for now — some scientific packages still lag on it.
 2. **Git for Windows** — [git-scm.com/download/win](https://git-scm.com/download/win)
    → Accept all defaults.
 3. **MetaTrader 5** — from your broker's site, or
@@ -52,7 +54,7 @@ Install these four, all free:
 Open **PowerShell** (Start menu → type "PowerShell") and confirm:
 
 ```powershell
-python --version    # expect 3.12.x
+python --version    # expect 3.12.x or 3.13.x
 git --version
 ```
 
@@ -90,7 +92,7 @@ GitHub).
 
 ```powershell
 pip install uv
-uv venv --python 3.12 .venv
+uv venv --python 3.12 .venv     # or --python 3.13 if that's what you installed
 .venv\Scripts\Activate.ps1
 ```
 
@@ -106,6 +108,14 @@ Then:
 ```powershell
 uv pip install -e ".[mt5,dev]"
 ```
+
+If this fails with an error about **ABI tags** or *"only found wheels for
+cp36m, cp37m..."*, your Python is a version MetaTrader5 has no wheel for.
+Check with `python --version` and use 3.12 or 3.13.
+
+The `[mt5]` extra is **Windows-only** — every MetaTrader5 wheel is `win_amd64`.
+On Linux/macOS use `uv pip install -e ".[dev]"` instead; everything except live
+MT5 execution still works there.
 
 Your prompt should now be prefixed `(.venv)`. **Every command from here needs
 that prefix** — if you open a new PowerShell window, re-run
