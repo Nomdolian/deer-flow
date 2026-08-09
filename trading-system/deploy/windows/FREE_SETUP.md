@@ -35,6 +35,23 @@ review) and a Windows VPS. Neither is needed for the system to trade.
 
 ---
 
+## Don't want to type any of this?
+
+**Double-click [`setup.bat`](./setup.bat)** in this folder instead. It handles
+steps 1 and 3–6 for you — finding or installing Python, building the environment,
+installing the packages — then opens a setup page in your browser where the rest
+(credentials, database, symbol picking, the order test, starting the processes)
+is buttons.
+
+You still need to do **step 2 by hand**: opening a demo account in MT5 and
+ticking "Allow algorithmic trading". No script can do that inside the terminal's
+own UI.
+
+The steps below are the manual version. Follow them if you want to understand
+what's happening, or if the script fails and you need to see where.
+
+---
+
 # Step 1 — Install the free software
 
 Install these four, all free:

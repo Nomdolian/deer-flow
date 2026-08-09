@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading system setup</title>
+<!-- Empty data URI: stops the browser requesting /favicon.ico, which would 404
+     in the console and look like a fault in a tool people run when worried. -->
+<link rel="icon" href="data:,">
+<style>
+:root {
+  color-scheme: light dark;
+  --ground: #E4E8EE; --surface: #FBFCFD; --surface-2: #EFF2F6; --code: #F1F4F8;
+  --line: #CBD3DE; --line-soft: #DDE3EB;
+  --text: #171C24; --text-2: #4E5867; --text-3: #74808F;
+  --brass: #9A6A17; --brass-soft: #EFE2C8;
+  --ok: #26694B; --ok-soft: #DDEBE3;
+  --warn: #8A6206; --warn-soft: #F6EBD3;
+  --bad: #9E3A31; --bad-soft: #F4DFDC;
+  --serif: ui-serif, "Iowan Old Style", Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0E1218; --surface: #171D26; --surface-2: #1E2530; --code: #10151C;
+    --line: #2C3541; --line-soft: #232B36;
+    --text: #E5E9EF; --text-2: #A3AEBD; --text-3: #7C879A;
+    --brass: #DFA84A; --brass-soft: #33291A;
+    --ok: #59BE92; --ok-soft: #16281F;
+    --warn: #D9A83F; --warn-soft: #2B2313;
+    --bad: #E5817A; --bad-soft: #2B1917;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--text); font-family: var(--sans); line-height: 1.6; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-family: var(--serif); font-weight: 500; font-size: clamp(27px, 4vw, 38px); line-height: 1.12; margin: 0 0 12px; }
+h2 { font-family: var(--serif); font-weight: 500; font-size: 22px; margin: 0 0 4px; }
+p { color: var(--text-2); margin: 0 0 12px; }
+p:last-child { margin-bottom: 0; }
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--brass); margin-bottom: 12px; }
+.mono { font-family: var(--mono); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 22px 24px; margin-top: 22px; }
+.card > h2 + p { margin-top: 6px; }
+.sub { font-size: 14px; color: var(--text-3); }
+
+/* checklist */
+.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: var(--line-soft); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.checks li { background: var(--surface); padding: 12px 16px; display: grid; grid-template-columns: 18px 1fr; gap: 12px; align-items: start; }
+.dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 8px; background: var(--text-3); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+.dot.fail { background: var(--bad); } .dot.todo { background: var(--text-3); }
+.check-label { font-weight: 600; font-size: 14.5px; }
+.check-detail { font-size: 13.5px; color: var(--text-2); }
+.check-fix { font-size: 13px; color: var(--brass); margin-top: 3px; }
+
+/* forms */
+label { display: block; font-size: 13px; color: var(--text-2); margin: 14px 0 5px; }
+input[type=text], input[type=password], select {
+  width: 100%; padding: 10px 12px; font-size: 14px; font-family: var(--mono);
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 5px;
+}
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 16px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+
+button {
+  font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  padding: 10px 16px; border-radius: 5px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--text);
+}
+button:hover:not(:disabled) { border-color: var(--brass); color: var(--brass); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--brass); border-color: var(--brass); color: var(--ground); }
+button.primary:hover:not(:disabled) { color: var(--ground); filter: brightness(1.08); }
+button.danger { color: var(--bad); border-color: var(--bad); background: transparent; }
+button.small { font-size: 12.5px; padding: 6px 10px; font-weight: 500; }
+
+pre {
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  background: var(--code); border: 1px solid var(--line-soft); border-radius: 5px;
+  padding: 14px 16px; margin: 14px 0 0; overflow-x: auto; white-space: pre-wrap; color: var(--text);
+}
+.msg { margin-top: 14px; padding: 12px 14px; border-radius: 5px; font-size: 14px; border-left: 2px solid; }
+.msg.ok { background: var(--ok-soft); border-color: var(--ok); color: var(--text); }
+.msg.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--text); }
+.msg.info { background: var(--brass-soft); border-color: var(--brass); color: var(--text); }
+.hidden { display: none; }
+
+/* symbol picker */
+.sym-list { display: grid; gap: 1px; background: var(--line-soft); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-top: 14px; max-height: 340px; overflow-y: auto; }
+.sym { background: var(--surface); padding: 10px 14px; display: grid; grid-template-columns: 22px 1fr auto; gap: 12px; align-items: center; font-size: 14px; }
+.sym .name { font-family: var(--mono); }
+.sym .note { font-size: 12px; color: var(--text-3); grid-column: 2 / -1; }
+.sym .note.bad { color: var(--bad); }
+
+/* processes */
+.proc { display: grid; grid-template-columns: 12px 1fr auto auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.proc:last-of-type { border-bottom: 0; }
+.proc .pname { font-size: 14.5px; }
+.proc .pmeta { font-family: var(--mono); font-size: 12px; color: var(--text-3); grid-column: 2 / -1; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 12px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); }
+th { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); }
+td { color: var(--text-2); }
+footer { margin-top: 40px; font-size: 13px; color: var(--text-3); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Runs on this computer only</p>
+  <h1>Trading system setup</h1>
+  <p>Work down the page. Each section checks itself, so you can stop and come back — nothing here needs the
+  command line.</p>
+
+  <div class="card">
+    <h2>Where things stand</h2>
+    <p class="sub">Refreshes every few seconds.</p>
+    <ul class="checks" id="checks"></ul>
+    <div class="row"><button class="small" id="refresh">Check again</button></div>
+  </div>
+
+  <div class="card">
+    <h2>1 &nbsp;Your MT5 account</h2>
+    <p>The login number, password and server name from MetaTrader 5. The system attaches to your
+    <strong>running terminal</strong>, so leave MT5 open and logged in.</p>
+    <div class="grid-2">
+      <div>
+        <label for="mt5_login">Login number</label>
+        <input type="text" id="mt5_login" placeholder="12345678" autocomplete="off">
+      </div>
+      <div>
+        <label for="mt5_server">Server name</label>
+        <input type="text" id="mt5_server" placeholder="YourBroker-Demo" autocomplete="off">
+      </div>
+    </div>
+    <label for="mt5_password">Password</label>
+    <input type="password" id="mt5_password" placeholder="leave blank to keep the saved one" autocomplete="off">
+    <label for="mt5_path">Path to terminal64.exe <span class="sub">— only if MT5 is installed somewhere unusual</span></label>
+    <input type="text" id="mt5_path" placeholder="usually leave this blank" autocomplete="off">
+    <div class="row">
+      <button class="primary" id="save-connection">Save and connect</button>
+      <button id="gen-secrets">Generate app secrets</button>
+    </div>
+    <div id="connection-msg" class="msg hidden"></div>
+    <div id="totp-msg" class="msg info hidden"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 &nbsp;Database</h2>
+    <p>A single file on this computer. Nothing to install.</p>
+    <div class="row"><button id="create-tables">Create tables</button></div>
+    <div id="tables-msg" class="msg hidden"></div>
+  </div>
+
+  <div class="card">
+    <h2>3 &nbsp;What it's allowed to trade</h2>
+    <p>Search your broker's own symbol list — names differ between brokers, and picking from this list avoids
+    the most common reason nothing ever trades.</p>
+    <div class="row">
+      <input type="text" id="symbol-search" placeholder="EUR, BTC, XAU…" style="flex:1 1 200px">
+      <button id="search-symbols">Search</button>
+    </div>
+    <div id="symbols" class="sym-list hidden"></div>
+    <div class="row">
+      <button id="inspect-symbols">Check sizing for the ticked ones</button>
+      <button class="primary" id="save-watchlist">Save selection</button>
+    </div>
+    <div id="sizing"></div>
+    <div id="watchlist-msg" class="msg hidden"></div>
+  </div>
+
+  <div class="card">
+    <h2>4 &nbsp;Prove it can place an order</h2>
+    <p>Places <strong>one minimum-size order</strong> on your demo account and closes it two seconds later.
+    This is the step that catches broker mismatches — lot sizes, filling modes, stop distances — in one line
+    instead of days later.</p>
+    <p class="sub">It refuses to run unless MetaTrader 5 reports a demo account.</p>
+    <div class="row">
+      <select id="verify-symbol" style="flex:1 1 180px"></select>
+      <button class="primary" id="verify-trade">Run the test</button>
+    </div>
+    <div id="verify-msg" class="msg hidden"></div>
+    <pre id="verify-output" class="hidden"></pre>
+  </div>
+
+  <div class="card">
+    <h2>5 &nbsp;Run it</h2>
+    <p>Three processes. Start the API first if you want the phone app; the trading loop is the one that
+    places orders.</p>
+    <div id="processes"></div>
+    <div id="process-msg" class="msg hidden"></div>
+    <pre id="process-log" class="hidden"></pre>
+  </div>
+
+  <div class="card">
+    <h2>Before you use real money</h2>
+    <table>
+      <tbody>
+        <tr><td><strong>Stay on demo for weeks</strong></td><td>The expectancy figures need roughly 20 closed trades per strategy before they mean anything.</td></tr>
+        <tr><td><strong>Re-run the backtest</strong></td><td>On daily bars the strategies did not show an edge. Test them on your broker's 15-minute data before drawing conclusions.</td></tr>
+        <tr><td><strong>Check your broker's rules</strong></td><td>Some prohibit automated trading and will close the account regardless of how the code behaves.</td></tr>
+        <tr><td><strong>Leave the risk defaults alone</strong></td><td>0.25% per trade, 3% portfolio cap. Raising them raises your risk of ruin non-linearly.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    This page is served from your own computer and is not reachable from the network. Close the setup window
+    when you're done — it doesn't need to keep running.
+  </footer>
+</div>
+
+<script>
+const TOKEN = "__TOKEN__";
+const q = (sel) => document.querySelector(sel);
+
+async function call(path, options = {}) {
+  const joiner = path.includes("?") ? "&" : "?";
+  const response = await fetch(`${path}${joiner}token=${encodeURIComponent(TOKEN)}`, {
+    method: options.body ? "POST" : (options.method || "GET"),
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try { detail = (await response.json()).detail || detail; } catch (e) { /* keep statusText */ }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+function show(el, kind, text) {
+  el.className = `msg ${kind}`;
+  el.textContent = text;
+}
+
+function busy(button, label) {
+  button.disabled = true;
+  button.dataset.was = button.textContent;
+  button.textContent = label;
+}
+function done(button) {
+  button.disabled = false;
+  if (button.dataset.was) button.textContent = button.dataset.was;
+}
+
+// ---------------------------------------------------------------- status
+let lastChecks = [];
+
+function renderChecks(checks) {
+  lastChecks = checks;
+  q("#checks").innerHTML = checks.map((c) => `
+    <li>
+      <span class="dot ${c.state}"></span>
+      <span>
+        <span class="check-label">${c.label}</span>
+        <span class="check-detail"> — ${c.detail || ""}</span>
+        ${c.fix ? `<div class="check-fix">${c.fix}</div>` : ""}
+      </span>
+    </li>`).join("");
+}
+
+function renderProcesses(processes) {
+  q("#processes").innerHTML = Object.entries(processes).map(([name, p]) => `
+    <div class="proc">
+      <span class="dot ${p.running ? "ok" : "todo"}"></span>
+      <span class="pname">${p.label}</span>
+      <button class="small" data-proc="${name}" data-cmd="${p.running ? "stop" : "start"}">${p.running ? "Stop" : "Start"}</button>
+      <button class="small" data-log="${name}">Output</button>
+      <span class="pmeta">${p.running ? `running, process ${p.pid}` : (p.exit_code === null || p.exit_code === undefined ? "not started" : `stopped, exit code ${p.exit_code}`)}</span>
+    </div>`).join("");
+}
+
+function fillVerifySymbols(checks) {
+  const watchlist = checks.find((c) => c.key === "watchlist");
+  const instruments = (watchlist && watchlist.data && watchlist.data.instruments) || [];
+  const select = q("#verify-symbol");
+  const previous = select.value;
+  select.innerHTML = instruments.length
+    ? instruments.map((i) => `<option value="${i.instrument}">${i.instrument}</option>`).join("")
+    : `<option value="">save some instruments first</option>`;
+  if (previous) select.value = previous;
+}
+
+async function refresh() {
+  try {
+    const data = await call("/api/status");
+    renderChecks(data.checks);
+    renderProcesses(data.processes);
+    fillVerifySymbols(data.checks);
+    if (data.env.mt5_login && !q("#mt5_login").value) q("#mt5_login").value = data.env.mt5_login;
+    if (data.env.mt5_server && !q("#mt5_server").value) q("#mt5_server").value = data.env.mt5_server;
+  } catch (err) {
+    q("#checks").innerHTML = `<li><span class="dot fail"></span><span class="check-detail">${err.message}</span></li>`;
+  }
+}
+
+q("#refresh").addEventListener("click", refresh);
+
+// ---------------------------------------------------------------- connection
+q("#save-connection").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const msg = q("#connection-msg");
+  busy(button, "Saving…");
+  try {
+    await call("/api/save-connection", {
+      body: {
+        database_url: "sqlite:///./trading.db",
+        mt5_login: q("#mt5_login").value,
+        mt5_server: q("#mt5_server").value,
+        mt5_password: q("#mt5_password").value,
+        mt5_path: q("#mt5_path").value,
+      },
+    });
+    q("#mt5_password").value = "";
+    show(msg, "ok", "Saved. The checklist above will show whether the terminal answers.");
+    msg.classList.remove("hidden");
+    await refresh();
+  } catch (err) {
+    show(msg, "bad", err.message);
+    msg.classList.remove("hidden");
+  } finally {
+    done(button);
+  }
+});
+
+q("#gen-secrets").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  busy(button, "Generating…");
+  try {
+    const data = await call("/api/generate-secrets", { body: {} });
+    const msg = q("#totp-msg");
+    msg.innerHTML = `<strong>Two-factor secret:</strong> <span class="mono">${data.api_totp_secret}</span><br>
+      Add it to any authenticator app using "enter setup key manually". You need the 6-digit code to
+      re-enable trading after an automatic halt, so save it now.`;
+    msg.classList.remove("hidden");
+    await refresh();
+  } catch (err) {
+    const msg = q("#connection-msg");
+    show(msg, "bad", err.message);
+    msg.classList.remove("hidden");
+  } finally {
+    done(button);
+  }
+});
+
+// ---------------------------------------------------------------- database
+q("#create-tables").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const msg = q("#tables-msg");
+  busy(button, "Creating…");
+  try {
+    const data = await call("/api/create-tables", { body: {} });
+    show(msg, data.ok ? "ok" : "bad", data.message);
+    msg.classList.remove("hidden");
+    await refresh();
+  } catch (err) {
+    show(msg, "bad", err.message);
+    msg.classList.remove("hidden");
+  } finally {
+    done(button);
+  }
+});
+
+// ---------------------------------------------------------------- symbols
+q("#search-symbols").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const list = q("#symbols");
+  busy(button, "Searching…");
+  try {
+    const data = await call(`/api/symbols?search=${encodeURIComponent(q("#symbol-search").value)}`);
+    if (!data.ok) {
+      list.classList.add("hidden");
+      const msg = q("#watchlist-msg");
+      show(msg, "bad", data.message);
+      msg.classList.remove("hidden");
+      return;
+    }
+    list.innerHTML = data.symbols.length
+      ? data.symbols.map((s) => `
+        <div class="sym">
+          <input type="checkbox" class="sym-check" value="${s.instrument}" data-class="${s.suggested_asset_class}">
+          <span class="name">${s.instrument}</span>
+          <span class="sub">${s.suggested_asset_class}</span>
+        </div>`).join("")
+      : `<div class="sym"><span></span><span class="note">Nothing matched. Try a shorter search.</span></div>`;
+    list.classList.remove("hidden");
+  } catch (err) {
+    const msg = q("#watchlist-msg");
+    show(msg, "bad", err.message);
+    msg.classList.remove("hidden");
+  } finally {
+    done(button);
+  }
+});
+
+const ticked = () => Array.from(document.querySelectorAll(".sym-check:checked"));
+
+q("#inspect-symbols").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const target = q("#sizing");
+  const picked = ticked().map((c) => c.value);
+  if (!picked.length) {
+    target.innerHTML = `<div class="msg info">Tick one or more symbols first.</div>`;
+    return;
+  }
+  busy(button, "Checking…");
+  try {
+    const data = await call("/api/inspect-symbols", { body: { instruments: picked } });
+    if (!data.ok) {
+      target.innerHTML = `<div class="msg bad">${data.message}</div>`;
+      return;
+    }
+    target.innerHTML = `
+      <table>
+        <thead><tr><th>Symbol</th><th>Price</th><th>Min lot</th><th>Your size</th></tr></thead>
+        <tbody>${data.symbols.map((s) => `
+          <tr>
+            <td class="mono">${s.instrument}</td>
+            <td class="mono">${s.bid ? s.bid.toFixed(s.digits ?? 5) : "—"}</td>
+            <td class="mono">${s.volume_min ?? "—"}</td>
+            <td>${s.lots_at_risk !== null && s.lots_at_risk !== undefined
+                  ? `<span class="mono">${s.lots_at_risk} lots</span>`
+                  : `<span class="note bad">${s.sizing_note}</span>`}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+      <p class="sub" style="margin-top:10px">Sizes assume a 1% stop, as a yardstick. A real signal sets its
+      own stop, and a tighter stop needs a larger position.</p>`;
+  } catch (err) {
+    target.innerHTML = `<div class="msg bad">${err.message}</div>`;
+  } finally {
+    done(button);
+  }
+});
+
+q("#save-watchlist").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const msg = q("#watchlist-msg");
+  const picked = ticked().map((c) => ({
+    instrument: c.value,
+    asset_class: c.dataset.class,
+    timeframe: "M15",
+    enabled: true,
+  }));
+  if (!picked.length) {
+    show(msg, "info", "Tick the symbols you want first.");
+    msg.classList.remove("hidden");
+    return;
+  }
+  busy(button, "Saving…");
+  try {
+    const data = await call("/api/save-watchlist", { body: { instruments: picked } });
+    show(msg, data.ok ? "ok" : "bad", data.ok ? `Saved: ${data.instruments.join(", ")}` : data.message);
+    msg.classList.remove("hidden");
+    await refresh();
+  } catch (err) {
+    show(msg, "bad", err.message);
+    msg.classList.remove("hidden");
+  } finally {
+    done(button);
+  }
+});
+
+// ---------------------------------------------------------------- verify
+q("#verify-trade").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const msg = q("#verify-msg");
+  const out = q("#verify-output");
+  const symbol = q("#verify-symbol").value;
+  if (!symbol) {
+    show(msg, "info", "Save at least one instrument first.");
+    msg.classList.remove("hidden");
+    return;
+  }
+  busy(button, "Placing a test order…");
+  show(msg, "info", "Running. This takes a few seconds.");
+  msg.classList.remove("hidden");
+  out.classList.add("hidden");
+  try {
+    const data = await call("/api/verify-trade", { body: { symbol } });
+    show(msg, data.ok ? "ok" : "bad", data.ok
+      ? "The order path works: sized, placed with a broker-side stop, found again, and closed."
+      : "The test did not pass. The output below names the cause.");
+    out.textContent = data.output || "(no output)";
+    out.classList.remove("hidden");
+  } catch (err) {
+    show(msg, "bad", err.message);
+  } finally {
+    done(button);
+  }
+});
+
+// ---------------------------------------------------------------- processes
+q("#processes").addEventListener("click", async (event) => {
+  const startStop = event.target.closest("[data-proc]");
+  const logButton = event.target.closest("[data-log]");
+  const msg = q("#process-msg");
+
+  if (startStop) {
+    busy(startStop, "…");
+    try {
+      const data = await call(`/api/process/${startStop.dataset.proc}/${startStop.dataset.cmd}`, { body: {} });
+      show(msg, data.ok ? "ok" : "bad", data.message);
+      msg.classList.remove("hidden");
+      await refresh();
+    } catch (err) {
+      show(msg, "bad", err.message);
+      msg.classList.remove("hidden");
+    } finally {
+      done(startStop);
+    }
+    return;
+  }
+
+  if (logButton) {
+    const pre = q("#process-log");
+    try {
+      const data = await call(`/api/process/${logButton.dataset.log}/log`);
+      pre.textContent = data.lines && data.lines.length ? data.lines.join("\n") : (data.message || "no output yet");
+      pre.classList.remove("hidden");
+    } catch (err) {
+      pre.textContent = err.message;
+      pre.classList.remove("hidden");
+    }
+  }
+});
+
+refresh();
+setInterval(refresh, 6000);
+</script>
+</body>
+</html>

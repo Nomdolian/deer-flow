@@ -237,12 +237,37 @@ runner and skip that script.
 This is the setup for actually trading: MT5 on a Windows machine, this system
 attached to it, running continuously.
 
+- **[`deploy/windows/setup.bat`](./deploy/windows/setup.bat)** — **double-click
+  it.** Finds or installs Python, builds the environment, installs the packages,
+  then opens a setup page in your browser where the rest is buttons: MT5
+  credentials, database, symbol picking, the demo order test, and starting the
+  processes. No command line. Start here if you'd rather not use PowerShell.
 - **[`deploy/windows/FREE_SETUP.md`](./deploy/windows/FREE_SETUP.md)** —
-  complete zero-cost walkthrough (MT5 demo + SQLite + Expo Go, no paid
-  services). Start here.
+  the same setup done by hand, zero-cost (MT5 demo + SQLite + Expo Go, no paid
+  services). Use it if you want to understand each step, or if the script fails.
 - **[`deploy/windows/README.md`](./deploy/windows/README.md)** — the reference
   runbook: 24/7 configuration, operating it, and an honest laptop-vs-VPS
   assessment.
+
+### The setup page
+
+`scripts/setup_wizard.py` serves it, and `setup.bat` launches it for you:
+
+```powershell
+python -m scripts.setup_wizard
+```
+
+It shows a live checklist (Python, packages, config, secrets, credentials,
+database, terminal, instruments, kill switch) and gives each remaining step a
+button. Symbol picking searches your broker's own list, which removes the most
+common reason nothing ever trades, and shows what your risk setting works out to
+in lots per symbol before you commit.
+
+It handles your broker password and can start processes, so it is locked down
+harder than the trading API: **127.0.0.1 only** (never `0.0.0.0`, unlike the API
+which the phone needs), a one-off token in the URL so another local process
+can't drive it, and it exits when you close it rather than lingering as a
+service.
 
 ```powershell
 uv pip install -e ".[mt5]"          # Windows only; MT5's Python API has no Linux/macOS build
