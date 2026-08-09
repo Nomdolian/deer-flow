@@ -87,7 +87,18 @@ Then:
 python -m scripts.init_db
 ```
 
-### 4. Verify MT5 connectivity before going anywhere near live
+### 4. Check the whole setup
+
+```powershell
+python -m scripts.doctor
+```
+
+This checks Python version, packages, `.env` secrets, Postgres, tables,
+watchlist, kill-switch state, and the MT5 terminal — and for anything broken it
+prints the exact command to fix it. Re-run it after every step; fix the **first**
+failure and re-run, since later checks often fail only because an earlier one did.
+
+### 5. Verify MT5 symbol names before going anywhere near live
 
 ```powershell
 python -m scripts.check_mt5
@@ -97,7 +108,7 @@ This confirms the terminal is reachable, algo trading is on, your symbols
 resolve, and reports which are tradeable right now. Fix anything it flags
 before continuing.
 
-### 5. Choose your instruments
+### 6. Choose your instruments
 
 Symbol names are **broker-specific** — `BTCUSD` on one broker is `BTCUSD.a` or
 `Bitcoin` on another. `check_mt5` prints your broker's actual crypto/forex
@@ -119,7 +130,7 @@ curl.exe -X POST -H "x-api-key: $key" -H "Content-Type: application/json" `
 
 Or just use the mobile app's **Assets** tab.
 
-### 6. Paper trade first
+### 7. Paper trade first
 
 Do not skip this. Point it at a **demo account** in MT5 and let it run for
 weeks, not days:
@@ -132,7 +143,7 @@ Watch the journal (`/journal`, or the mobile Journal tab). You are looking for:
 signals firing at sane times, stops and targets landing where you'd expect,
 and the weekly stats job producing an expectancy you'd actually accept.
 
-### 7. Configure 24/7 operation
+### 8. Configure 24/7 operation
 
 In an **admin** PowerShell:
 
@@ -152,7 +163,7 @@ Start it without rebooting:
 Start-ScheduledTask -TaskName TradingSystemRunner
 ```
 
-### 8. The two other processes
+### 9. The two other processes
 
 The trading runner is one of three. Run the API (for the mobile app) and the
 scheduler (for the learning loop) too — separate windows, or add them as their

@@ -132,6 +132,7 @@ scripts/
   init_db.py              create tables
   run_backtest.py          walk-forward backtest a strategy against local CSV history
   run_live_paper.py        run the orchestrator loop against a live/CSV feed through PaperAdapter
+  doctor.py                setup check: deps, .env, DB, tables, watchlist, MT5 — with fixes
   check_mt5.py             MT5 pre-flight: connection, algo trading, broker symbol names
   run_mt5_live.py          the 24/7 live runner (reconcile -> watchdog -> trade loop)
   run_watchlist.py         multi-asset paper runner
@@ -240,9 +241,16 @@ laptop-vs-VPS.
 
 ```powershell
 uv pip install -e ".[mt5]"        # Windows only; MT5's Python API has no Linux/macOS build
-python -m scripts.check_mt5       # pre-flight: connection, algo trading, your broker's symbol names
+python -m scripts.doctor          # checks everything and tells you what to fix
+python -m scripts.check_mt5       # your broker's actual symbol names (they vary)
 python -m scripts.run_mt5_live    # the 24/7 runner
 ```
+
+`scripts/doctor.py` is the fastest way to find out what's wrong with a setup:
+it checks Python version, packages, `.env` secrets, Postgres, tables,
+watchlist, kill-switch state, and the MT5 terminal, printing the exact fix
+command for anything broken. Fix the **first** failure and re-run — later
+checks often fail only because an earlier one did.
 
 **What "24/7" actually means per asset class.** Crypto CFDs genuinely run
 24/7 (if your broker lists them, minus a short daily maintenance window);
