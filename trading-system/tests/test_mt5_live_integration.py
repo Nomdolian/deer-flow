@@ -23,6 +23,12 @@ from app.watchlist.runner import WatchlistRunner
 from app.watchlist.service import add_instrument
 from tests import fake_mt5
 
+# A crypto CFD's contract terms are nothing like an FX pair's: one lot is one
+# coin, not 100,000 units, and it's quoted to 2 decimals. Getting this wrong is
+# a 100,000x position-size error, so the tests spell it out rather than
+# inheriting the FX defaults.
+CRYPTO_CFD = {"trade_contract_size": 1.0, "digits": 2, "point": 0.01, "volume_min": 0.01, "volume_step": 0.01}
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake():
@@ -108,7 +114,7 @@ def test_forex_and_crypto_trade_together_on_one_account(session_local):
     """Crypto CFDs run 24/7 while forex is ~24/5, so both must be able to be
     live simultaneously against the same account and the same risk caps."""
     fake_mt5.add_symbol("EURUSD", 1.10)
-    fake_mt5.add_symbol("BTCUSD", 64000.0)
+    fake_mt5.add_symbol("BTCUSD", 64000.0, **CRYPTO_CFD)
     runner, execution = _build_runner(
         session_local,
         instruments=[("EURUSD", AssetClass.forex), ("BTCUSD", AssetClass.crypto_major)],
@@ -125,7 +131,7 @@ def test_weekend_closed_forex_does_not_trade_but_crypto_still_does(session_local
     (weekend) and crypto open, only crypto should trade — and the forex skip
     must be recorded as an expected market closure, not a fault."""
     fake_mt5.add_symbol("EURUSD", 1.10, tradeable=False)  # weekend
-    fake_mt5.add_symbol("BTCUSD", 64000.0, tradeable=True)  # crypto never sleeps
+    fake_mt5.add_symbol("BTCUSD", 64000.0, tradeable=True, **CRYPTO_CFD)  # crypto never sleeps
     runner, execution = _build_runner(
         session_local,
         instruments=[("EURUSD", AssetClass.forex), ("BTCUSD", AssetClass.crypto_major)],

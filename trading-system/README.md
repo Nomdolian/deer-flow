@@ -133,7 +133,8 @@ scripts/
   run_backtest.py          walk-forward backtest a strategy against local CSV history
   run_live_paper.py        run the orchestrator loop against a live/CSV feed through PaperAdapter
   doctor.py                setup check: deps, .env, DB, tables, watchlist, MT5 — with fixes
-  check_mt5.py             MT5 pre-flight: connection, algo trading, broker symbol names
+  check_mt5.py             MT5 pre-flight: connection, algo trading, symbol names, contract terms
+  verify_mt5_trade.py      places + closes ONE minimum-size demo trade to prove the order path
   run_mt5_live.py          the 24/7 live runner (reconcile -> watchdog -> trade loop)
   run_watchlist.py         multi-asset paper runner
   run_scheduler.py         the learning loop (classification + weekly re-weighting)
@@ -244,10 +245,11 @@ attached to it, running continuously.
   assessment.
 
 ```powershell
-uv pip install -e ".[mt5]"        # Windows only; MT5's Python API has no Linux/macOS build
-python -m scripts.doctor          # checks everything and tells you what to fix
-python -m scripts.check_mt5       # your broker's actual symbol names (they vary)
-python -m scripts.run_mt5_live    # the 24/7 runner
+uv pip install -e ".[mt5]"          # Windows only; MT5's Python API has no Linux/macOS build
+python -m scripts.doctor            # checks everything and tells you what to fix
+python -m scripts.check_mt5         # broker symbol names + contract terms + your size in lots
+python -m scripts.verify_mt5_trade  # places and closes ONE minimum-size demo trade
+python -m scripts.run_mt5_live      # the 24/7 runner
 ```
 
 `scripts/doctor.py` is the fastest way to find out what's wrong with a setup:
@@ -266,6 +268,46 @@ quiet rather than alerting as a broken feed.
 `Bitcoin` on another. `scripts/check_mt5.py --list-crypto` prints yours; use
 those exact strings on the watchlist or the system will fail closed and simply
 never trade them.
+
+### Contract terms decide whether an order is accepted at all
+
+The risk manager sizes in **instrument units** (`size = risk_amount /
+stop_distance`). MT5 orders are in **lots**. For EURUSD that's a factor of
+100,000, and for a Bitcoin CFD it's 1 — so the conversion has to come from the
+symbol, never a constant. `MT5Adapter.get_symbol_spec()` reads it fresh per
+order, along with everything else the broker enforces:
+
+| Broker rule | What ignoring it does |
+|---|---|
+| `trade_contract_size` | Position sized 100,000x wrong |
+| `volume_step` / `volume_min` / `volume_max` | Every order rejected, `TRADE_RETCODE_INVALID_VOLUME` |
+| `filling_mode` (per symbol, a bitmask) | Every order rejected, `TRADE_RETCODE_INVALID_FILL` |
+| `trade_stops_level` | Every order rejected, `TRADE_RETCODE_INVALID_STOPS` |
+| `digits` | Unrounded prices rejected |
+| `deviation` (slippage) | Rejected on any tick movement between quote and fill |
+
+Two deliberate choices in there:
+
+- **Volume rounds down, never up.** The risk manager authorized a specific
+  dollar risk; rounding a lot size up spends more than it approved. If the
+  result lands under the broker's minimum lot the trade is **rejected**, with a
+  reason saying the account is too small for that instrument at that risk —
+  rather than quietly taking a bigger position than allowed.
+- **Stops inside the broker's minimum distance are rejected, not widened.**
+  Widening a stop to satisfy the broker silently increases the loss the position
+  was sized for.
+
+Run `scripts/verify_mt5_trade.py` once per broker. It places one minimum-size
+order on a **demo** account and closes it, exercising the whole chain — contract
+terms, lot conversion, filling mode, broker-side stops, ticket lookup, close. It
+refuses to run against a funded account without an explicit override and a typed
+confirmation. Every failure it catches would otherwise have surfaced days later
+as "the bot never trades", with no explanation.
+
+**Paper trading does not model lot granularity.** `PaperAdapter` works in
+instrument units with no rounding or minimum, so paper and backtest runs will
+take trades a real broker would reject as under-minimum. Treat paper results as
+an upper bound on trade count.
 
 ### What makes it survive running continuously
 

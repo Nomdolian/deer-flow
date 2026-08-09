@@ -17,7 +17,13 @@ def _adapter() -> MT5Adapter:
     return MT5Adapter(mt5_module=fake_mt5)
 
 
-def _request(client_order_id="c1", instrument="EURUSD", direction=Direction.long, size=0.1):
+# 10,000 units of EURUSD = 0.10 lots at the standard 100,000 contract size.
+# `size` is in INSTRUMENT UNITS, which is what the risk manager produces
+# (size = risk_amount / stop_distance); the adapter converts to lots.
+STANDARD_UNITS = 10_000.0
+
+
+def _request(client_order_id="c1", instrument="EURUSD", direction=Direction.long, size=STANDARD_UNITS):
     return OrderRequest(
         client_order_id=client_order_id,
         instrument=instrument,

@@ -236,7 +236,45 @@ python -m scripts.doctor
 The watchlist warning should be gone, and it now verifies your symbols actually
 resolve at your broker.
 
-# Step 9 — Start trading (demo)
+`check_mt5` is worth a second look here too — it now prints each symbol's
+contract terms and what your risk setting works out to in lots:
+
+```powershell
+python -m scripts.check_mt5
+```
+
+If it says a symbol's position would fall **under your broker's minimum lot**,
+that symbol cannot trade on this account at your current risk setting. The
+system rejects rather than rounding up past the risk you authorized, so it would
+simply never trade it. On a small demo account this is common for Bitcoin —
+pick a lower-priced instrument, or accept that BTC needs more equity.
+
+# Step 9 — Prove it can actually place an order
+
+Everything so far shows the system *could* trade. This shows that it *does*:
+
+```powershell
+python -m scripts.verify_mt5_trade --symbol EURUSD
+```
+
+It places **one minimum-size order** and closes it a couple of seconds later,
+which exercises the whole chain: contract terms, lot conversion, filling mode,
+broker-side stop and target, finding the position again by ticket, and closing
+it. Nothing is written to the trade journal — it's a broker test, not a strategy
+trade.
+
+It refuses to run unless MT5 reports a **demo** account. That guard is the point;
+don't work around it until you've seen it pass on demo.
+
+If it fails, the error names the cause — invalid volume, invalid stops,
+unsupported filling mode, algo trading off, insufficient margin. Every one of
+those would otherwise have shown up as "the bot never trades", days later, with
+no explanation.
+
+Run it once per broker, and again any time you change broker, account type, or
+symbol.
+
+# Step 10 — Start trading (demo)
 
 ```powershell
 python -m scripts.run_mt5_live --poll-seconds 30
@@ -251,7 +289,7 @@ What to look for over the first days:
 - Forex going quiet over the weekend while crypto keeps going — that's the
   24/5 vs 24/7 distinction working, logged as `market_closed`, not an error
 
-# Step 10 — The phone app (free via Expo Go)
+# Step 11 — The phone app (free via Expo Go)
 
 Install **Expo Go** from the App Store / Play Store (free).
 
@@ -282,7 +320,7 @@ via "enter setup key manually".
 Push notifications need a free Expo account (`npx eas init`) — optional; every
 screen polls and pull-to-refreshes without it.
 
-# Step 11 — Keep it running 24/7
+# Step 12 — Keep it running 24/7
 
 In an **admin** PowerShell (right-click PowerShell → Run as administrator):
 
@@ -305,7 +343,7 @@ Start-ScheduledTask -TaskName TradingSystemRunner
 **Also keep the laptop plugged in.** Battery-powered, Windows will throttle and
 eventually sleep regardless of settings.
 
-# Step 12 — Optional: the learning loop
+# Step 13 — Optional: the learning loop
 
 The *mechanical* half (expectancy stats per strategy, automatic
 down-weighting/pausing of underperformers) needs no API key and no LLM:
@@ -346,10 +384,11 @@ Check `logs\` and the Journal tab for why, then re-enable from the app.
 | `running scripts is disabled` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | `ModuleNotFoundError` | venv not active — run `.venv\Scripts\Activate.ps1` |
 | `MT5 initialize() failed` | Terminal not running/logged in, or algo trading off (Step 2) |
-| Nothing ever trades | Wrong symbol names — re-run Step 7; or the market is closed; or `doctor` shows the kill switch engaged |
+| Nothing ever trades | Wrong symbol names — re-run Step 7; or the market is closed; or `doctor` shows the kill switch engaged; or the position would be under your broker's minimum lot (`check_mt5` says so) |
+| `invalid volume` / `invalid stops` / `unsupported filling` | Broker contract terms — run Step 9's `verify_mt5_trade`, which reproduces it in isolation and names the cause |
 | It traded for a while, then stopped | A strategy hit the consecutive-loss breaker and is **paused**. This latches on purpose. Check the Strategies tab for a PAUSED badge, read why in the journal, then resume it there (TOTP-gated) |
 | `cannot open the SQLite file` | Path problem — `doctor` prints the correct slash syntax |
-| Phone can't connect | Different WiFi, or firewall — re-run Step 11's script |
+| Phone can't connect | Different WiFi, or firewall — re-run Step 12's script |
 
 **When stuck, run `python -m scripts.doctor` first.** It's designed to tell you
 what's actually wrong instead of leaving you guessing.

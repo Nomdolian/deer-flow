@@ -295,6 +295,7 @@ def check_mt5(doc: Doctor, *, skip: bool) -> None:
         return
 
     try:
+        from app.config import settings
         from app.execution.mt5_adapter import MT5Adapter
 
         adapter = MT5Adapter()
@@ -379,6 +380,32 @@ def check_mt5(doc: Doctor, *, skip: bool) -> None:
                 f"{len(tradeable)} tradeable right now (the rest are closed markets, which is normal)",
             )
 
+        # Resolving a symbol says nothing about whether an order would be
+        # accepted on it. Check the sizing arithmetic that actually decides.
+        untradeable_size = []
+        for symbol in symbols:
+            spec = adapter.get_symbol_spec(symbol)
+            if spec is None:
+                continue
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                continue
+            equity = adapter.get_equity() if adapter.ensure_connected() else 0.0
+            risk_amount = equity * settings.risk_per_trade_pct
+            if risk_amount <= 0:
+                continue
+            mid = (tick.bid + tick.ask) / 2
+            _, error = adapter.resolve_volume(symbol, risk_amount / (mid * 0.01))
+            if error is not None:
+                untradeable_size.append(symbol)
+        if untradeable_size:
+            doc.warn(
+                f"{', '.join(untradeable_size)}: position would fall under the broker's minimum lot",
+                f"At {settings.risk_per_trade_pct:.2%} risk this account is too small for these symbols, so\n"
+                "the system will reject rather than round up past the risk you authorized. Details:\n"
+                "  python -m scripts.check_mt5",
+            )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -407,7 +434,10 @@ def main() -> None:
         print(f"No blocking problems. {doc.warnings} warning(s) above worth reading.")
     else:
         print("All checks passed.")
-    print("\nNext: python -m scripts.run_mt5_live   (or run_watchlist for paper trading)")
+    print(
+        "\nNext: python -m scripts.verify_mt5_trade   (proves the order path on a demo account)"
+        "\n      python -m scripts.run_mt5_live       (or run_watchlist for paper trading)"
+    )
 
 
 if __name__ == "__main__":

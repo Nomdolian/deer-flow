@@ -1,4 +1,6 @@
+import math
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.config import settings
@@ -10,6 +12,53 @@ from app.execution.base import ExecutionAdapter, OpenPositionSnapshot, OrderRequ
 # preserved by MT5 and is how we distinguish OUR positions from ones you opened
 # by hand in the terminal — we must never close or modify a manual trade.
 SYSTEM_MAGIC = 20260808
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolSpec:
+    """The broker's contract terms for one symbol.
+
+    Every field here is a way an order gets rejected if you ignore it. They are
+    per-symbol AND per-broker: the same "BTCUSD" has a different contract size
+    and lot step at two brokers, so none of this can be hard-coded.
+    """
+
+    name: str
+    contract_size: float  # units of the base instrument in one lot
+    volume_min: float
+    volume_max: float
+    volume_step: float
+    digits: int
+    point: float
+    stops_level_points: int  # broker's minimum SL/TP distance, in points
+    filling_mode: int  # bitmask of the filling modes this symbol accepts
+
+    def units_to_lots(self, units: float) -> float:
+        """Convert a size in instrument units into lots, rounded DOWN to the
+        broker's lot step.
+
+        Down, never up: the risk manager authorized a specific dollar risk, and
+        rounding a lot size up spends more than it approved. Rounding down
+        risks slightly less, which no risk rule forbids.
+        """
+        if self.contract_size <= 0 or self.volume_step <= 0:
+            return 0.0
+        lots = units / self.contract_size
+        steps = math.floor(lots / self.volume_step + 1e-9)
+        return round(steps * self.volume_step, 8)
+
+    def round_price(self, price: float | None) -> float | None:
+        return None if price is None else round(price, self.digits)
+
+    def min_stop_distance(self) -> float:
+        return self.stops_level_points * self.point
+
+
+# Preference order for filling modes. FOK first: it either fills the whole
+# order at the requested price or rejects it, which is the honest behaviour for
+# a system that sized the position precisely. IOC can partially fill, leaving a
+# position smaller than the risk calculation assumed.
+_FILLING_PREFERENCE = ("FOK", "IOC", "RETURN")
 
 
 def _import_mt5():
@@ -157,6 +206,109 @@ class MT5Adapter(ExecutionAdapter):
         full = getattr(mt5, "SYMBOL_TRADE_MODE_FULL", 4)
         return getattr(info, "trade_mode", full) == full
 
+    # ---------------- symbol contract terms ----------------
+
+    def get_symbol_spec(self, instrument: str) -> SymbolSpec | None:
+        """The broker's contract terms for a symbol, or None if unavailable.
+
+        Deliberately not cached: a broker can change lot step or widen its
+        minimum stop distance intraday (commonly around news or rollover), and
+        a stale spec turns into rejected orders that look like bugs. One extra
+        IPC call per order is cheap next to that.
+        """
+        if not self.ensure_connected():
+            return None
+        mt5 = self._mt5
+        try:
+            info = mt5.symbol_info(instrument)
+            if info is not None and not getattr(info, "visible", True):
+                mt5.symbol_select(instrument, True)
+                info = mt5.symbol_info(instrument)
+        except Exception:  # noqa: BLE001
+            return None
+        if info is None:
+            return None
+
+        return SymbolSpec(
+            name=instrument,
+            contract_size=float(getattr(info, "trade_contract_size", 0.0) or 0.0),
+            volume_min=float(getattr(info, "volume_min", 0.0) or 0.0),
+            volume_max=float(getattr(info, "volume_max", 0.0) or 0.0),
+            volume_step=float(getattr(info, "volume_step", 0.0) or 0.0),
+            digits=int(getattr(info, "digits", 5) or 5),
+            point=float(getattr(info, "point", 0.0) or 0.0),
+            stops_level_points=int(getattr(info, "trade_stops_level", 0) or 0),
+            filling_mode=int(getattr(info, "filling_mode", 0) or 0),
+        )
+
+    def _filling_mode_for(self, spec: SymbolSpec) -> int | None:
+        """Pick a filling mode the symbol actually accepts.
+
+        MT5 exposes this as a bitmask, and it varies by broker and symbol.
+        Sending an unsupported mode gets every order rejected with
+        TRADE_RETCODE_INVALID_FILL — a failure that looks like a broken system
+        rather than a one-line mismatch, which is why it's worth deriving.
+        """
+        mt5 = self._mt5
+        for name in _FILLING_PREFERENCE:
+            flag = getattr(mt5, f"SYMBOL_FILLING_{name}", None)
+            mode = getattr(mt5, f"ORDER_FILLING_{name}", None)
+            if flag is None or mode is None:
+                continue
+            if spec.filling_mode & flag:
+                return mode
+        # Some brokers report 0. Fall back to IOC rather than refusing to trade,
+        # since a wrong guess is a clean rejection, not a bad fill.
+        return getattr(mt5, "ORDER_FILLING_IOC", None)
+
+    def resolve_volume(self, instrument: str, size_units: float) -> tuple[float | None, str | None]:
+        """Translate a risk-manager size (instrument units) into broker lots.
+
+        Returns (lots, error). The risk manager works in units of the
+        instrument — `size = risk_amount / stop_distance` — while MT5 wants
+        LOTS. For EURUSD that's a factor of 100,000, so passing the raw size
+        straight through asks for a position a hundred thousand times too big.
+        """
+        spec = self.get_symbol_spec(instrument)
+        if spec is None:
+            return None, f"symbol_spec_unavailable: {instrument}"
+        if spec.contract_size <= 0 or spec.volume_step <= 0:
+            return None, f"symbol_spec_incomplete: contract_size={spec.contract_size} step={spec.volume_step}"
+
+        lots = spec.units_to_lots(size_units)
+
+        if lots < spec.volume_min:
+            # Rounding up to the broker's minimum would take more risk than the
+            # risk manager approved. Skipping the trade is the correct answer:
+            # this account is too small to express this setup at this risk.
+            return None, (
+                f"size_below_broker_minimum: need {lots:.8f} lots, "
+                f"broker minimum is {spec.volume_min} (raise equity or risk per trade)"
+            )
+        # Clamping down only reduces risk, so it's safe to proceed.
+        return min(lots, spec.volume_max), None
+
+    def _validate_stops(
+        self, spec: SymbolSpec, price: float, stop_loss: float | None, take_profit: float | None
+    ) -> str | None:
+        """Reject stops the broker won't accept, rather than widening them.
+
+        Widening a stop to satisfy the broker silently increases the loss the
+        risk manager sized for. Better to skip the trade and say why.
+        """
+        minimum = spec.min_stop_distance()
+        if minimum <= 0:
+            return None
+        for label, level in (("stop_loss", stop_loss), ("take_profit", take_profit)):
+            if level is None:
+                continue
+            if abs(price - level) < minimum:
+                return (
+                    f"{label}_too_close_to_price: {abs(price - level):.{spec.digits}f} < "
+                    f"broker minimum {minimum:.{spec.digits}f}"
+                )
+        return None
+
     # ---------------- orders ----------------
 
     def place_order(self, request: OrderRequest) -> OrderResult:
@@ -184,25 +336,40 @@ class MT5Adapter(ExecutionAdapter):
         if tick is None:
             return OrderResult(request.client_order_id, None, "rejected", error="no_tick_data")
 
+        spec = self.get_symbol_spec(request.instrument)
+        if spec is None:
+            return OrderResult(request.client_order_id, None, "rejected", error=f"symbol_spec_unavailable: {request.instrument}")
+
+        lots, volume_error = self.resolve_volume(request.instrument, request.size)
+        if volume_error is not None:
+            return OrderResult(request.client_order_id, None, "rejected", error=volume_error)
+
         is_long = request.direction == Direction.long
         order_type = mt5.ORDER_TYPE_BUY if is_long else mt5.ORDER_TYPE_SELL
-        price = tick.ask if is_long else tick.bid
+        price = spec.round_price(tick.ask if is_long else tick.bid)
+        stop_loss = spec.round_price(request.stop_loss)
+        take_profit = spec.round_price(request.take_profit)
+
+        stops_error = self._validate_stops(spec, price, stop_loss, take_profit)
+        if stops_error is not None:
+            return OrderResult(request.client_order_id, None, "rejected", error=stops_error)
 
         try:
             result = mt5.order_send(
                 {
                     "action": mt5.TRADE_ACTION_DEAL,
                     "symbol": request.instrument,
-                    "volume": request.size,
+                    "volume": lots,
                     "type": order_type,
                     "price": price,
-                    "sl": request.stop_loss,
-                    "tp": request.take_profit,
+                    "sl": stop_loss,
+                    "tp": take_profit,
+                    "deviation": settings.mt5_slippage_points,
                     # magic is the reliable ownership marker; comment is
                     # best-effort human context only and is never matched on.
                     "magic": self.magic,
                     "comment": request.client_order_id[:31],
-                    "type_filling": mt5.ORDER_FILLING_IOC,
+                    "type_filling": self._filling_mode_for(spec),
                 }
             )
         except Exception as exc:  # noqa: BLE001
@@ -240,14 +407,34 @@ class MT5Adapter(ExecutionAdapter):
         if position is None:
             return OrderResult(client_order_id, None, "error", error="position_not_found")
 
+        new_sl = stop_loss if stop_loss is not None else position.sl
+        new_tp = take_profit if take_profit is not None else position.tp
+
+        # Same per-symbol rules as opening: an unrounded level or one inside the
+        # broker's minimum distance is rejected, which would leave a position
+        # running with its old stop while the caller believed it had moved.
+        spec = self.get_symbol_spec(position.symbol)
+        if spec is not None:
+            new_sl = spec.round_price(new_sl)
+            new_tp = spec.round_price(new_tp)
+            try:
+                tick = mt5.symbol_info_tick(position.symbol)
+            except Exception:  # noqa: BLE001
+                tick = None
+            if tick is not None:
+                reference = tick.bid if position.type == mt5.ORDER_TYPE_BUY else tick.ask
+                stops_error = self._validate_stops(spec, reference, new_sl, new_tp)
+                if stops_error is not None:
+                    return OrderResult(client_order_id, None, "error", error=stops_error)
+
         try:
             result = mt5.order_send(
                 {
                     "action": mt5.TRADE_ACTION_SLTP,
                     "position": position.ticket,
                     "symbol": position.symbol,
-                    "sl": stop_loss if stop_loss is not None else position.sl,
-                    "tp": take_profit if take_profit is not None else position.tp,
+                    "sl": new_sl,
+                    "tp": new_tp,
                 }
             )
         except Exception as exc:  # noqa: BLE001
@@ -278,6 +465,13 @@ class MT5Adapter(ExecutionAdapter):
         close_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
         price = tick.bid if is_buy else tick.ask
 
+        # position.volume is already in lots — it came from the broker — so no
+        # conversion here, only the same per-symbol rounding and filling mode.
+        spec = self.get_symbol_spec(position.symbol)
+        if spec is not None:
+            price = spec.round_price(price)
+        filling = self._filling_mode_for(spec) if spec is not None else getattr(mt5, "ORDER_FILLING_IOC", None)
+
         try:
             result = mt5.order_send(
                 {
@@ -287,8 +481,9 @@ class MT5Adapter(ExecutionAdapter):
                     "type": close_type,
                     "position": position.ticket,
                     "price": price,
+                    "deviation": settings.mt5_slippage_points,
                     "magic": self.magic,
-                    "type_filling": mt5.ORDER_FILLING_IOC,
+                    "type_filling": filling,
                 }
             )
         except Exception as exc:  # noqa: BLE001

@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     mt5_password: str = ""
     mt5_server: str = ""
     mt5_path: str = ""
+    # Slippage tolerance in points passed to MT5 as `deviation`. Zero makes the
+    # broker reject any fill that moved between quote and execution, which on a
+    # fast market means most of them. 20 points is a normal retail default.
+    mt5_slippage_points: int = 20
 
     alpha_vantage_api_key: str = ""
 

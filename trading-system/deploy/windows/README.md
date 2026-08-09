@@ -111,8 +111,24 @@ python -m scripts.check_mt5
 ```
 
 This confirms the terminal is reachable, algo trading is on, your symbols
-resolve, and reports which are tradeable right now. Fix anything it flags
-before continuing.
+resolve, and reports which are tradeable right now. It also prints each symbol's
+contract terms (contract size, lot step/min/max, minimum stop distance) and what
+your configured risk works out to in lots — if that lands under the broker's
+minimum lot, that symbol can never trade on this account at this risk setting.
+Fix anything it flags before continuing.
+
+Then prove an order actually reaches the broker:
+
+```powershell
+python -m scripts.verify_mt5_trade --symbol EURUSD
+```
+
+One minimum-size order, opened and closed a couple of seconds later, exercising
+lot conversion, filling mode, broker-side stops, ticket lookup and close. It
+refuses to run unless MT5 reports a demo account. Nothing is written to the
+trade journal. Run it per broker and after any broker, account-type or symbol
+change — a rejection here is a one-line fix, whereas the same rejection during
+live running looks like the system doing nothing.
 
 ### 6. Choose your instruments
 

@@ -12,6 +12,7 @@ and shows which of your watchlist symbols are tradeable right now.
 
 import argparse
 
+from app.config import settings
 from app.db.base import SessionLocal
 from app.execution.mt5_adapter import SYSTEM_MAGIC, MT5Adapter
 from app.watchlist.service import list_watchlist
@@ -91,8 +92,12 @@ def main() -> None:
         print("\nNo symbols to check (watchlist is empty). Pass --symbols, or add some via /watchlist.")
         return
 
+    equity = float(getattr(account, "equity", 0.0)) if account is not None else 0.0
+    risk_amount = equity * settings.risk_per_trade_pct
+
     print("\n== symbol check ==")
     any_bad = False
+    too_small = []
     for symbol in symbols:
         info = mt5.symbol_info(symbol)
         if info is None:
@@ -103,7 +108,38 @@ def main() -> None:
         tradeable = adapter.is_tradeable(symbol)
         price = f"{tick.bid:.5f}/{tick.ask:.5f}" if tick else "no tick"
         state = "TRADEABLE" if tradeable else "closed/disabled right now"
-        print(f"  {symbol:<14} {state:<26} {price}  min_lot={getattr(info, 'volume_min', '?')}")
+        print(f"  {symbol:<14} {state:<26} {price}")
+
+        spec = adapter.get_symbol_spec(symbol)
+        if spec is None:
+            print("      could not read contract terms")
+            any_bad = True
+            continue
+        print(
+            f"      contract={spec.contract_size:g} lots={spec.volume_min:g}-{spec.volume_max:g} "
+            f"step={spec.volume_step:g} digits={spec.digits} "
+            f"min_stop={spec.min_stop_distance():.{spec.digits}f}"
+        )
+
+        # The question that actually decides whether this symbol can ever
+        # trade on this account: does one authorized risk amount survive the
+        # broker's minimum lot?
+        if tick is not None and risk_amount > 0:
+            mid = (tick.bid + tick.ask) / 2
+            # A 1% stop is only a yardstick for this preview — real signals set
+            # their own stop, and a tighter one needs a LARGER position.
+            example_stop_distance = mid * 0.01
+            units = risk_amount / example_stop_distance
+            lots, error = adapter.resolve_volume(symbol, units)
+            if error is not None:
+                print(f"      at {settings.risk_per_trade_pct:.2%} risk (${risk_amount:.2f}): {error}")
+                too_small.append(symbol)
+            else:
+                print(
+                    f"      at {settings.risk_per_trade_pct:.2%} risk (${risk_amount:.2f}) with a 1% stop: "
+                    f"{lots:g} lots"
+                )
+
         if not tradeable:
             print("      (not an error if the market is simply closed — weekends for forex, "
                   "maintenance windows for crypto)")
@@ -111,6 +147,17 @@ def main() -> None:
     if any_bad:
         print("\nFix the NOT FOUND symbols before running the live runner — the system fails closed "
               "on unknown symbols and will simply never trade them.")
+
+    if too_small:
+        print(
+            f"\n{', '.join(too_small)}: your account is too small to trade this at "
+            f"{settings.risk_per_trade_pct:.2%} risk — the position would land under the broker's "
+            "minimum lot, and the system rejects rather than rounding up past the risk you authorized.\n"
+            "  Options: pick a lower-priced instrument, use a broker offering smaller lots, raise equity, "
+            "or raise RISK_PER_TRADE_PCT (which raises your ruin risk non-linearly — do it deliberately)."
+        )
+
+    print("\nNext: python -m scripts.verify_mt5_trade   (proves the order path on a demo account)")
 
 
 if __name__ == "__main__":
