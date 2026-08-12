@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { Badge, Card, EmptyState, ErrorBanner, LoadingView, SectionTitle } from "../components/Common";
 import { useApiData } from "../hooks/useApiData";
 import type { OpenPositionDTO } from "../api/types";
+import { formatPrice, formatSize } from "../format";
 import { colors, spacing } from "../theme";
 
 const POLL_MS = 15_000;
@@ -66,8 +67,8 @@ function PositionRow({ position }: { position: OpenPositionDTO }) {
         <Badge label={position.direction.toUpperCase()} tone={tone} />
       </View>
       <Text style={styles.meta}>
-        size {position.size.toFixed(2)} · entry {position.filled_price ?? "—"} · SL {position.stop_loss ?? "—"} · TP{" "}
-        {position.take_profit ?? "—"}
+        size {formatSize(position.size)} · entry {formatPrice(position.filled_price)} · SL{" "}
+        {formatPrice(position.stop_loss)} · TP {formatPrice(position.take_profit)}
       </Text>
       <Text style={styles.meta}>
         {position.strategy_id} · {position.asset_class}

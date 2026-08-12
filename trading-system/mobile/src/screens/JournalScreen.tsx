@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { Badge, Card, EmptyState, ErrorBanner, LoadingView } from "../components/Common";
 import { useApiData } from "../hooks/useApiData";
 import type { TradeJournalDTO } from "../api/types";
+import { formatMoney, formatPrice, formatR, formatSize } from "../format";
 import { colors, spacing } from "../theme";
 
 const POLL_MS = 20_000;
@@ -50,13 +51,13 @@ function TradeRow({ trade }: { trade: TradeJournalDTO }) {
         {isOpen ? <Badge label="OPEN" tone="warning" /> : <Badge label={(trade.outcome ?? "—").toUpperCase()} tone={outcomeTone} />}
       </View>
       <Text style={styles.meta}>
-        {trade.strategy_id} v{trade.strategy_version} · {trade.direction.toUpperCase()} · size {trade.size.toFixed(2)}
+        {trade.strategy_id} v{trade.strategy_version} · {trade.direction.toUpperCase()} · size {formatSize(trade.size)}
       </Text>
       <Text style={styles.meta}>
-        entry {trade.entry_price}
-        {trade.exit_price !== null ? ` · exit ${trade.exit_price}` : ""}
-        {trade.pnl !== null ? ` · pnl ${trade.pnl.toFixed(2)}` : ""}
-        {trade.r_multiple !== null ? ` · ${trade.r_multiple.toFixed(2)}R` : ""}
+        entry {formatPrice(trade.entry_price)}
+        {trade.exit_price !== null ? ` · exit ${formatPrice(trade.exit_price)}` : ""}
+        {trade.pnl !== null ? ` · pnl ${formatMoney(trade.pnl, { signed: true })}` : ""}
+        {trade.r_multiple !== null ? ` · ${formatR(trade.r_multiple)}` : ""}
       </Text>
       {trade.classification && <Text style={styles.classification}>review: {trade.classification}</Text>}
       <Text style={styles.timestamp}>

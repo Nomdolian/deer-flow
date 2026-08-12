@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { Badge, Card, EmptyState, ErrorBanner, LoadingView } from "../components/Common";
 import { useApiData } from "../hooks/useApiData";
 import type { SignalDTO } from "../api/types";
+import { formatPrice } from "../format";
 import { colors, spacing } from "../theme";
 
 const POLL_MS = 15_000;
@@ -52,7 +53,7 @@ function SignalRow({ signal }: { signal: SignalDTO }) {
         {signal.strategy_id} v{signal.strategy_version} · confidence {(signal.confidence_score * 100).toFixed(0)}%
       </Text>
       <Text style={styles.meta}>
-        entry {signal.entry} · SL {signal.stop_loss} · TP {signal.take_profit}
+        entry {formatPrice(signal.entry)} · SL {formatPrice(signal.stop_loss)} · TP {formatPrice(signal.take_profit)}
       </Text>
       <View style={styles.confluenceWrap}>
         {signal.confluences.map((c, idx) => (

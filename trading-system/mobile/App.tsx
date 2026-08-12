@@ -3,6 +3,7 @@ import React from "react";
 import { ActivityIndicator, SafeAreaView, StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { ErrorBoundary } from "./src/components/ErrorBoundary";
 import RootNavigator from "./src/navigation/RootNavigator";
 import SettingsScreen from "./src/screens/SettingsScreen";
 import { SettingsProvider, useSettings } from "./src/context/SettingsContext";
@@ -33,13 +34,18 @@ function Gate() {
 }
 
 export default function App() {
+  // The boundary wraps everything including the provider: a storage failure
+  // used to take the whole tree down to a blank screen, which on a trading app
+  // is indistinguishable from the server being dead.
   return (
-    <SafeAreaProvider>
-      <SettingsProvider>
-        <Gate />
-        <StatusBar style="light" />
-      </SettingsProvider>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <SettingsProvider>
+          <Gate />
+          <StatusBar style="light" />
+        </SettingsProvider>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
 

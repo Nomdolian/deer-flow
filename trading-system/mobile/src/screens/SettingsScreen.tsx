@@ -8,7 +8,7 @@ import { registerForPushNotifications } from "../notifications/register";
 import { colors, radii, spacing } from "../theme";
 
 export default function SettingsScreen() {
-  const { serverUrl, apiKey, isConfigured, setServerUrl, setApiKey, clear } = useSettings();
+  const { serverUrl, apiKey, isConfigured, backend, storageError, setServerUrl, setApiKey, clear } = useSettings();
   const [urlInput, setUrlInput] = useState(serverUrl);
   const [keyInput, setKeyInput] = useState(apiKey);
   const [testing, setTesting] = useState(false);
@@ -96,6 +96,16 @@ export default function SettingsScreen() {
             <Text style={styles.secondaryButtonText}>{testing ? "Testing…" : "Test connection"}</Text>
           </TouchableOpacity>
           {testResult ? <Text style={styles.testResult}>{testResult}</Text> : null}
+          {/* Say where the key actually lives. Implying keychain protection on
+              a platform that doesn't have it would be the wrong kind of quiet. */}
+          <Text style={backend === "keychain" ? styles.storageNote : styles.storageWarning}>
+            {backend === "keychain"
+              ? "Stored in the device keychain."
+              : backend === "browser"
+                ? "Stored in browser storage — weaker than the device keychain, which isn't available on web. Use the phone app for anything you care about."
+                : "Storage is unavailable, so this will be forgotten when you close the app."}
+          </Text>
+          {storageError ? <Text style={styles.storageWarning}>Storage error: {storageError}</Text> : null}
         </Card>
 
         {isConfigured && (
@@ -154,6 +164,8 @@ const styles = StyleSheet.create({
   secondaryButton: { padding: spacing.md, alignItems: "center", marginTop: spacing.sm },
   secondaryButtonText: { color: colors.accent, fontWeight: "600" },
   testResult: { color: colors.textSecondary, textAlign: "center", marginTop: spacing.xs, fontSize: 13 },
+  storageNote: { color: colors.textSecondary, fontSize: 11.5, marginTop: spacing.md, lineHeight: 16 },
+  storageWarning: { color: colors.warning, fontSize: 11.5, marginTop: spacing.md, lineHeight: 16 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   dangerButton: { padding: spacing.md, alignItems: "center" },
   dangerButtonText: { color: colors.negative, fontWeight: "600" },

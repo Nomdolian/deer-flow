@@ -17,12 +17,14 @@
       ]
     ],
     "ios": {
+      "bundleIdentifier": "com.tradingsystem.mobile",
       "supportsTablet": true,
       "infoPlist": {
         "NSUserNotificationsUsageDescription": "Used to alert you about new signals, fills, kill switch events, and feed health issues."
       }
     },
     "android": {
+      "package": "com.tradingsystem.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#0B0F14",
         "foregroundImage": "./assets/android-icon-foreground.png",

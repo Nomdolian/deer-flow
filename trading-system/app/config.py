@@ -33,6 +33,11 @@ class Settings(BaseSettings):
 
     api_auth_secret: str = "change-me-to-a-long-random-value"
     api_totp_secret: str = ""
+    # Browser origins allowed to call the API, comma-separated. Empty by default
+    # and deliberately never "*": the iOS/Android app isn't subject to CORS, so
+    # only the web build needs this, and a wildcard would let any site the
+    # operator visits drive their trading API if it ever learned the key.
+    api_cors_origins: str = ""
 
 
 settings = Settings()
