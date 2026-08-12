@@ -1,0 +1,3 @@
+date,symbol,asset_class,instrument,setup,direction,mode,entry,stop,target,exit,size,risk_dollars,pnl_dollars,result_r,plan_followed,rules_broken,emotion_note
+2026-03-01,ABC,stocks,stock,Gap & Go,LONG,paper,10.50,10.20,11.10,10.20,1,0.30,-0.30,-1.00,yes,,Calm — good loss. Example row; delete before real use.
+2026-03-02,BTCUSD,crypto,crypto-spot,VWAP Reclaim,LONG,paper,63736.00,62500.00,66208.00,66208.00,0.00040453,0.50,1.00,2.00,yes,,Example row — note size uses 100% of budget vs 60% on the stock above. Delete before real use.

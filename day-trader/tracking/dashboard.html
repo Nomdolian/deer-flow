@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Day Trader OS — Performance Dashboard</title>
+<style>
+  .viz-root{
+    color-scheme:light;
+    --surface-1:#fcfcfb; --plane:#f9f9f7;
+    --text-primary:#0b0b0b; --text-secondary:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --baseline:#c3c2b7; --border:rgba(11,11,11,0.10);
+    --pos:#2a78d6;      /* diverging pole: gain  */
+    --neg:#d03b3b;      /* diverging pole: loss  */
+    --neutral:#f0efec;  /* diverging midpoint    */
+    --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
+    --success-text:#006300;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:where(:not([data-theme="light"])) .viz-root{
+      color-scheme:dark;
+      --surface-1:#1a1a19; --plane:#0d0d0d;
+      --text-primary:#fff; --text-secondary:#c3c2b7; --muted:#898781;
+      --grid:#2c2c2a; --baseline:#383835; --border:rgba(255,255,255,0.10);
+      --pos:#3987e5; --neg:#e66767; --neutral:#383835;
+      --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
+      --success-text:#0ca30c;
+    }
+  }
+  :root[data-theme="dark"] .viz-root{
+    color-scheme:dark;
+    --surface-1:#1a1a19; --plane:#0d0d0d;
+    --text-primary:#fff; --text-secondary:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --baseline:#383835; --border:rgba(255,255,255,0.10);
+    --pos:#3987e5; --neg:#e66767; --neutral:#383835;
+    --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
+    --success-text:#0ca30c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+  .viz-root{background:var(--plane);color:var(--text-primary);min-height:100vh;padding:20px 16px 64px}
+  .wrap{max-width:1060px;margin:0 auto}
+  header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  h1{font-size:20px;margin:0;letter-spacing:-.01em}
+  .sub{color:var(--text-secondary);font-size:13px;margin:4px 0 0}
+  .btn{font:inherit;font-size:12px;padding:7px 12px;border-radius:8px;cursor:pointer;
+       border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary)}
+  .btn:hover{background:var(--neutral)}
+  .btn.primary{background:var(--pos);border-color:var(--pos);color:#fff}
+  .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:16px}
+  .card h2{font-size:13px;margin:0 0 2px;letter-spacing:.02em;text-transform:uppercase;color:var(--text-secondary)}
+  .card .note{font-size:12px;color:var(--muted);margin:0 0 14px}
+
+  /* hero */
+  .hero{display:flex;gap:22px;align-items:baseline;flex-wrap:wrap}
+  .hero .fig{font-size:52px;font-weight:640;line-height:1;letter-spacing:-.02em}
+  .hero .cap{font-size:13px;color:var(--text-secondary);max-width:440px}
+  .meter{height:8px;border-radius:999px;background:var(--neutral);overflow:hidden;margin-top:14px}
+  .meter > i{display:block;height:100%;border-radius:999px;background:var(--pos)}
+
+  /* tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-top:16px}
+  .tile{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:13px 14px}
+  .tile .k{font-size:11px;color:var(--muted);letter-spacing:.03em;text-transform:uppercase}
+  .tile .v{font-size:25px;font-weight:600;margin-top:5px;line-height:1.1}
+  .tile .v .sm{font-size:19px;white-space:nowrap;display:inline-block}
+  .tile .m{font-size:11px;color:var(--text-secondary);margin-top:3px}
+
+  svg{display:block;width:100%;overflow:visible}
+  .gridline{stroke:var(--grid);stroke-width:1}
+  .axis{stroke:var(--baseline);stroke-width:1}
+  .tick{fill:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}
+  .lbl{fill:var(--text-secondary);font-size:10px;font-variant-numeric:tabular-nums}
+
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary);margin-bottom:10px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+  th,td{text-align:right;padding:7px 8px;border-bottom:1px solid var(--grid)}
+  th:first-child,td:first-child,th.l,td.l{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+
+  .gate{display:flex;gap:10px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--grid);font-size:13px}
+  .gate:last-child{border-bottom:0}
+  .gate .ic{font-size:14px;line-height:1.4;width:16px;flex:none;text-align:center}
+  .gate .tx{flex:1}
+  .gate .st{font-size:11.5px;color:var(--text-secondary);margin-top:2px}
+
+  form{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:9px;align-items:end}
+  label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em}
+  input,select{font:inherit;font-size:13px;width:100%;padding:7px 8px;border-radius:7px;
+    border:1px solid var(--border);background:var(--plane);color:var(--text-primary)}
+  .full{grid-column:1/-1}
+  .banner{font-size:12.5px;padding:11px 13px;border-radius:9px;background:var(--neutral);
+    color:var(--text-secondary);margin-top:14px;line-height:1.5}
+  .tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .1s;background:var(--surface-1);
+    border:1px solid var(--border);border-radius:9px;padding:8px 10px;font-size:12px;
+    box-shadow:0 6px 20px rgba(0,0,0,.13);z-index:50;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .empty{color:var(--muted);font-size:13px;padding:26px 0;text-align:center}
+  footer{margin-top:22px;font-size:11.5px;color:var(--muted);line-height:1.6}
+</style>
+</head>
+<body>
+<div class="viz-root">
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Performance Dashboard</h1>
+      <p class="sub">AI Day Trader OS · multi-asset · $50 cash account · 1% risk ($0.50) · 3% ceiling ($1.50)</p>
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap">
+      <button class="btn" id="themeBtn">Dark mode</button>
+      <button class="btn" id="tableBtn">Show table</button>
+      <button class="btn" id="csvBtn">Export CSV</button>
+    </div>
+  </header>
+
+  <!-- HERO: the only metric fully under my control -->
+  <div class="card">
+    <h2>Plan adherence</h2>
+    <p class="note">The only metric you fully control. Grade the process; the P&amp;L follows it — or it doesn't, but you'll know why.</p>
+    <div class="hero">
+      <div class="fig" id="adhFig">—</div>
+      <div class="cap" id="adhCap">Log trades below to begin.</div>
+    </div>
+    <div class="meter"><i id="adhBar" style="width:0%"></i></div>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <!-- EQUITY CURVE -->
+  <div class="card">
+    <h2>Cumulative R</h2>
+    <p class="note">Measured in R, not dollars — R is scale-free, so it stays meaningful when the account grows.</p>
+    <div id="eqWrap"><svg id="eq" viewBox="0 0 900 260" role="img" aria-label="Cumulative R over trades"></svg></div>
+  </div>
+
+  <!-- PER-TRADE R -->
+  <div class="card">
+    <h2>R multiple by trade</h2>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--pos)"></i>Gain (above baseline)</span>
+      <span><i class="sw" style="background:var(--neg)"></i>Loss (below baseline)</span>
+    </div>
+    <div id="barWrap"><svg id="bars" viewBox="0 0 900 240" role="img" aria-label="R multiple per trade"></svg></div>
+  </div>
+
+  <!-- ASSET CLASS BREAKDOWN -->
+  <div class="card">
+    <h2>By asset class</h2>
+    <p class="note">Which classes am I actually trading, and is one of them responsible for
+      most of my rule breaks? Classes marked <strong>unreachable</strong> need a bigger
+      account than $50 — see <code>strategy/instruments.md</code>.</p>
+    <div id="classTbl"></div>
+  </div>
+
+  <!-- SETUP BREAKDOWN -->
+  <div class="card">
+    <h2>By setup × asset class</h2>
+    <p class="note">Validation is per setup <em>and</em> per class — a VWAP reclaim on a $6
+      stock and one on BTC are different setups with different counters. Each needs its own
+      30+ trades before the numbers mean anything.</p>
+    <div id="setupTbl"></div>
+  </div>
+
+  <!-- READINESS GATE -->
+  <div class="card">
+    <h2>Real-money readiness gate</h2>
+    <p class="note">All five must pass. Prompt 20 — be brutally honest. Note the second
+      gate: 30 trades scattered across classes validates nothing, so what counts is 30 in
+      a single setup <em>and</em> class.</p>
+    <div id="gates"></div>
+  </div>
+
+  <!-- TABLE VIEW (accessibility: identity never by color alone) -->
+  <div class="card" id="tableCard" style="display:none">
+    <h2>Trade log</h2>
+    <div style="overflow-x:auto"><div id="logTbl"></div></div>
+  </div>
+
+  <!-- ENTRY -->
+  <div class="card">
+    <h2>Log a trade</h2>
+    <p class="note">Risk $ is what you had at risk at entry (shares × stop distance). R is computed from it.</p>
+    <form id="f">
+      <div><label>Date</label><input type="date" id="i_date" required></div>
+      <div><label>Symbol</label><input id="i_ticker" placeholder="ABC / BTCUSD" required></div>
+      <div><label>Asset class</label><select id="i_asset"></select></div>
+      <div><label>Setup</label><select id="i_setup">
+        <option>Gap &amp; Go</option><option>Opening Range Breakout</option>
+        <option>VWAP Reclaim</option><option>MA Pullback</option>
+        <option>Session Open Range</option><option>Other</option></select></div>
+      <div><label>Mode</label><select id="i_mode"><option value="paper">Paper</option><option value="real">Real</option></select></div>
+      <div><label>Risk $</label><input type="number" step="0.01" min="0.01" id="i_risk" placeholder="0.50" required></div>
+      <div><label>P&amp;L $</label><input type="number" step="0.01" id="i_pnl" placeholder="-0.30" required></div>
+      <div><label>Plan followed</label><select id="i_plan">
+        <option value="yes">Fully</option><option value="partly">Partly</option><option value="no">No</option></select></div>
+      <div><label>Rule broken</label><input id="i_broke" placeholder="none"></div>
+      <div class="full"><label>Emotion note</label><input id="i_note" placeholder="Calm — good loss"></div>
+      <div class="full" style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="submit" class="btn primary">Add trade</button>
+        <button type="button" class="btn" id="clearBtn">Clear all</button>
+        <label class="btn" style="text-transform:none;letter-spacing:0;color:var(--text-primary);margin:0">
+          Import CSV<input type="file" id="imp" accept=".csv" hidden></label>
+      </div>
+    </form>
+    <div class="banner" id="scaleNote"></div>
+  </div>
+
+  <footer>
+    Education, not financial advice. Day trading is high-risk and most day traders lose money.
+    Data lives in this page only — <strong>export to CSV before closing</strong>, or it's gone.<br>
+    PDT rule eliminated June 4, 2026 (FINRA Notice 26-10). Broker phase-in runs to Oct 20, 2027 — verify with your broker.
+    That is <em>US equity</em> regulation only: forex, futures and crypto sit under different regimes, and
+    none of them impose the T+1 trade-count brake — outside equities your 3-trade rule is the only limit.
+  </footer>
+</div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+// ---------- state (in-memory only) ----------
+const CLASSES = ["stocks","crypto","forex","metals","commodities","indices","other"];
+// Reachable at $50 per strategy/instruments.md — the rest need a bigger account.
+const REACHABLE = ["stocks","crypto","forex"];
+
+let trades = [
+  {date:"2026-03-01",ticker:"ABC",asset:"stocks",setup:"Gap & Go",mode:"paper",risk:0.30,pnl:-0.30,
+   plan:"yes",broke:"",note:"Calm — good loss. Example row — clear before real use."},
+  {date:"2026-03-02",ticker:"BTCUSD",asset:"crypto",setup:"VWAP Reclaim",mode:"paper",risk:0.50,pnl:1.00,
+   plan:"yes",broke:"",note:"Example row — clear before real use."}
+];
+const $ = id => document.getElementById(id);
+const fmt = (n,d=2) => (n<0?"−":"") + Math.abs(n).toFixed(d);
+
+// ---------- metrics ----------
+function metrics(){
+  const n = trades.length;
+  if(!n) return {n:0};
+  const R = trades.map(t => t.risk>0 ? t.pnl/t.risk : 0);
+  const wins = R.filter(r=>r>0), losses = R.filter(r=>r<0);
+  const winRate = wins.length/n;
+  const avgWin = wins.length ? wins.reduce((a,b)=>a+b,0)/wins.length : 0;
+  const avgLoss = losses.length ? losses.reduce((a,b)=>a+b,0)/losses.length : 0;
+  // expectancy in R = p(win)*avgWinR + p(loss)*avgLossR   (avgLossR already negative)
+  const expectancy = winRate*avgWin + (1-winRate)*avgLoss;
+  const adherence = trades.filter(t=>t.plan==="yes").length/n;
+  let cum=0, curve=[0], peak=0, maxDD=0;
+  R.forEach(r=>{ cum+=r; curve.push(cum); peak=Math.max(peak,cum); maxDD=Math.min(maxDD,cum-peak); });
+  const classes=[...new Set(trades.map(t=>t.asset||"other"))];
+  return {n,R,winRate,avgWin,avgLoss,expectancy,adherence,curve,totalR:cum,maxDD,
+          netPnl:trades.reduce((a,t)=>a+t.pnl,0),
+          paper:trades.filter(t=>t.mode==="paper").length,
+          classCount:classes.length,
+          classList:classes.join(", ")};
+}
+
+// ---------- tiles ----------
+function renderTiles(m){
+  if(!m.n){ $("tiles").innerHTML=""; return; }
+  const t = [
+    ["Trades", m.n, `${m.paper} paper / ${m.n-m.paper} real`],
+    ["Classes traded", m.classCount, m.classList],
+    ["Win rate", (m.winRate*100).toFixed(0)+"%", `${Math.round(m.winRate*m.n)} of ${m.n}`],
+    ["Expectancy", fmt(m.expectancy)+"R", m.expectancy>0?"Positive":"Not positive"],
+    ["Avg win / loss", `<span class="sm">${fmt(m.avgWin,1)}R / ${fmt(m.avgLoss,1)}R</span>`, "per trade"],
+    ["Total R", fmt(m.totalR,1)+"R", "cumulative"],
+    ["Max drawdown", fmt(m.maxDD,1)+"R", "peak to trough"],
+    ["Net P&L", (m.netPnl<0?"−$":"$")+Math.abs(m.netPnl).toFixed(2), "dollars are noise at $50"]
+  ];
+  $("tiles").innerHTML = t.map(([k,v,s])=>
+    `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="m">${s}</div></div>`).join("");
+}
+
+// ---------- hero ----------
+function renderHero(m){
+  if(!m.n){ $("adhFig").textContent="—"; $("adhCap").textContent="Log trades below to begin.";
+            $("adhBar").style.width="0%"; return; }
+  const p = m.adherence*100;
+  $("adhFig").textContent = p.toFixed(0)+"%";
+  $("adhBar").style.width = p+"%";
+  $("adhBar").style.background = p>=90 ? "var(--pos)" : p>=70 ? "var(--warning)" : "var(--neg)";
+  $("adhCap").textContent = p>=90
+    ? "Above the 90% gate. This is what a working process looks like — protect it."
+    : p>=70 ? "Below the 90% gate. The deviations are the signal here: read the rules-broken column and find the pattern."
+            : "Well below the gate. Right now you're not testing setups, you're testing improvisation — the trade results can't tell you anything yet.";
+}
+
+// ---------- equity curve (line + crosshair) ----------
+function renderEq(m){
+  const svg=$("eq"), W=900,H=260, P={t:16,r:20,b:30,l:44};
+  if(!m.n){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" class="lbl" text-anchor="middle">No trades yet</text>`; return; }
+  const c=m.curve, lo=Math.min(0,...c), hi=Math.max(0,...c), pad=(hi-lo)*0.12||1;
+  const y0=lo-pad, y1=hi+pad;
+  const X=i=> P.l + i*(W-P.l-P.r)/Math.max(1,c.length-1);
+  const Y=v=> P.t + (y1-v)*(H-P.t-P.b)/(y1-y0);
+  let g="";
+  for(let k=0;k<=4;k++){
+    const v=y0+(y1-y0)*k/4, y=Y(v);
+    g+=`<line class="gridline" x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}"/>
+        <text class="tick" x="${P.l-8}" y="${y+3}" text-anchor="end">${v.toFixed(1)}R</text>`;
+  }
+  const zy=Y(0);
+  g+=`<line class="axis" x1="${P.l}" y1="${zy}" x2="${W-P.r}" y2="${zy}" stroke-dasharray="3 3"/>`;
+  const d=c.map((v,i)=>(i?"L":"M")+X(i)+" "+Y(v)).join(" ");
+  const area=d+` L ${X(c.length-1)} ${zy} L ${X(0)} ${zy} Z`;
+  g+=`<path d="${area}" fill="var(--pos)" opacity=".08"/>`;
+  g+=`<path d="${d}" fill="none" stroke="var(--pos)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  // 2px surface ring on the end marker so it reads over the line
+  g+=`<circle cx="${X(c.length-1)}" cy="${Y(c[c.length-1])}" r="4.5" fill="var(--pos)" stroke="var(--surface-1)" stroke-width="2"/>`;
+  g+=`<text class="lbl" x="${X(c.length-1)}" y="${Y(c[c.length-1])-11}" text-anchor="end">${fmt(m.totalR,1)}R</text>`;
+  g+=`<text class="tick" x="${P.l}" y="${H-10}">start</text>
+      <text class="tick" x="${W-P.r}" y="${H-10}" text-anchor="end">trade ${m.n}</text>`;
+  g+=`<line id="ch" class="axis" y1="${P.t}" y2="${H-P.b}" x1="-99" x2="-99" opacity="0"/>`;
+  g+=`<rect id="eqhit" x="${P.l}" y="${P.t}" width="${W-P.l-P.r}" height="${H-P.t-P.b}" fill="transparent"/>`;
+  svg.innerHTML=g;
+
+  const hit=svg.querySelector("#eqhit"), ch=svg.querySelector("#ch"), tip=$("tip");
+  hit.addEventListener("mousemove",e=>{
+    const r=svg.getBoundingClientRect(), sx=(e.clientX-r.left)*W/r.width;
+    let i=Math.round((sx-P.l)/((W-P.l-P.r)/Math.max(1,c.length-1)));
+    i=Math.max(0,Math.min(c.length-1,i));
+    ch.setAttribute("x1",X(i)); ch.setAttribute("x2",X(i)); ch.setAttribute("opacity","1");
+    const t=i===0?null:trades[i-1];
+    tip.innerHTML = (i===0?"<b>Start</b>":`<b>${t.ticker}</b> · ${t.asset||"other"}<br>${t.setup}<br>${t.date}`)
+      + `<br>Cumulative ${fmt(c[i],2)}R` + (i?`<br>This trade ${fmt(m.R[i-1],2)}R`:"");
+    tip.style.opacity=1; tip.style.left=Math.min(e.clientX+14,innerWidth-190)+"px"; tip.style.top=(e.clientY-10)+"px";
+  });
+  hit.addEventListener("mouseleave",()=>{ tip.style.opacity=0; ch.setAttribute("opacity","0"); });
+}
+
+// ---------- per-trade R bars ----------
+function renderBars(m){
+  const svg=$("bars"), W=900,H=240, P={t:20,r:20,b:34,l:44};
+  if(!m.n){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" class="lbl" text-anchor="middle">No trades yet</text>`; return; }
+  const lo=Math.min(-1,...m.R), hi=Math.max(1,...m.R), pad=(hi-lo)*0.14;
+  const y0=lo-pad, y1=hi+pad;
+  const Y=v=> P.t + (y1-v)*(H-P.t-P.b)/(y1-y0);
+  const bw=(W-P.l-P.r)/m.n, gap=2, w=Math.max(3,Math.min(38,bw-gap));
+  let g="";
+  for(let k=0;k<=4;k++){
+    const v=y0+(y1-y0)*k/4, y=Y(v);
+    g+=`<line class="gridline" x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}"/>
+        <text class="tick" x="${P.l-8}" y="${y+3}" text-anchor="end">${v.toFixed(1)}R</text>`;
+  }
+  const zy=Y(0);
+  m.R.forEach((r,i)=>{
+    const cx=P.l+bw*i+bw/2, x=cx-w/2, y=r>=0?Y(r):zy, h=Math.max(2,Math.abs(Y(r)-zy));
+    const col=r>=0?"var(--pos)":"var(--neg)";
+    // 4px rounded data-end, square at the baseline
+    const rad=Math.min(4,w/2,h);
+    const path = r>=0
+      ? `M${x} ${y+h} L${x} ${y+rad} Q${x} ${y} ${x+rad} ${y} L${x+w-rad} ${y} Q${x+w} ${y} ${x+w} ${y+rad} L${x+w} ${y+h} Z`
+      : `M${x} ${y} L${x} ${y+h-rad} Q${x} ${y+h} ${x+rad} ${y+h} L${x+w-rad} ${y+h} Q${x+w} ${y+h} ${x+w} ${y+h-rad} L${x+w} ${y} Z`;
+    g+=`<path d="${path}" fill="${col}" data-i="${i}" class="bar"/>`;
+    if(m.n<=14) g+=`<text class="lbl" x="${cx}" y="${r>=0?y-6:y+h+12}" text-anchor="middle">${fmt(r,1)}</text>`;
+  });
+  g+=`<line class="axis" x1="${P.l}" y1="${zy}" x2="${W-P.r}" y2="${zy}"/>`;
+  g+=`<text class="tick" x="${P.l}" y="${H-10}">trade 1</text>
+      <text class="tick" x="${W-P.r}" y="${H-10}" text-anchor="end">trade ${m.n}</text>`;
+  svg.innerHTML=g;
+
+  const tip=$("tip");
+  svg.querySelectorAll(".bar").forEach(b=>{
+    b.style.cursor="pointer";
+    b.addEventListener("mousemove",e=>{
+      const t=trades[+b.dataset.i], r=m.R[+b.dataset.i];
+      tip.innerHTML=`<b>${t.ticker}</b> · ${t.asset||"other"}<br>${t.setup}<br>${t.date} · ${t.mode}<br>
+        ${fmt(r,2)}R · ${t.pnl<0?"−$":"$"}${Math.abs(t.pnl).toFixed(2)}<br>
+        Plan followed: ${t.plan}${t.broke?"<br>Broke: "+t.broke:""}`;
+      tip.style.opacity=1; tip.style.left=Math.min(e.clientX+14,innerWidth-200)+"px"; tip.style.top=(e.clientY-10)+"px";
+    });
+    b.addEventListener("mouseleave",()=>tip.style.opacity=0);
+  });
+}
+
+// ---------- grouping helper ----------
+// Shared by both breakdowns: same expectancy math, different key.
+function groupStats(m, keyFn){
+  const by={};
+  trades.forEach((t,i)=>{
+    const k=keyFn(t);
+    (by[k] = by[k] || {rs:[], broke:0}).rs.push(m.R[i]);
+    if(t.broke) by[k].broke++;
+  });
+  return Object.entries(by).map(([k,v])=>{
+    const rs=v.rs, w=rs.filter(r=>r>0), l=rs.filter(r=>r<0), wr=w.length/rs.length;
+    const aw=w.length?w.reduce((a,b)=>a+b,0)/w.length:0;
+    const al=l.length?l.reduce((a,b)=>a+b,0)/l.length:0;
+    return {key:k, n:rs.length, winRate:wr, expectancy:wr*aw+(1-wr)*al,
+            totalR:rs.reduce((a,b)=>a+b,0), broke:v.broke};
+  }).sort((a,b)=>b.n-a.n);
+}
+
+// ---------- by asset class ----------
+function renderClasses(m){
+  if(!m.n){ $("classTbl").innerHTML='<div class="empty">No trades yet</div>'; return; }
+  const rows=groupStats(m, t=>t.asset||"other").map(g=>{
+    const reach = REACHABLE.includes(g.key);
+    return `<tr><td class="l">${g.key}</td><td>${g.n}</td><td>${(g.winRate*100).toFixed(0)}%</td>
+      <td>${fmt(g.expectancy,2)}R</td><td>${fmt(g.totalR,1)}R</td>
+      <td>${g.broke}</td>
+      <td class="l">${reach?"✅ reachable at $50":"⚠️ unreachable at $50"}</td></tr>`;
+  }).join("");
+  $("classTbl").innerHTML=`<table><thead><tr><th class="l">Asset class</th><th>Trades</th>
+    <th>Win rate</th><th>Expectancy</th><th>Total R</th><th>Rule breaks</th>
+    <th class="l">Account fit</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ---------- by setup x asset class ----------
+function renderSetups(m){
+  if(!m.n){ $("setupTbl").innerHTML='<div class="empty">No trades yet</div>'; return; }
+  const rows=groupStats(m, t=>`${t.setup}||${t.asset||"other"}`).map(g=>{
+    const [setup, cls]=g.key.split("||");
+    const ready=g.n>=30;
+    return `<tr><td class="l">${setup}</td><td class="l">${cls}</td><td>${g.n}</td>
+      <td>${g.n}/30</td><td>${(g.winRate*100).toFixed(0)}%</td><td>${fmt(g.expectancy,2)}R</td>
+      <td class="l">${ready?(g.expectancy>0?"🟢 eligible":"🟡 keep testing"):"🔴 not validated"}</td></tr>`;
+  }).join("");
+  $("setupTbl").innerHTML=`<table><thead><tr><th class="l">Setup</th><th class="l">Class</th>
+    <th>Trades</th><th>Toward 30</th><th>Win rate</th><th>Expectancy</th>
+    <th class="l">Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ---------- readiness gate ----------
+function renderGates(m){
+  // 30 trades spread across five setup/class combinations validates nothing, so the
+  // gate is the BEST single setup-and-class pairing, not the overall count.
+  const best = m.n ? groupStats(m, t=>`${t.setup}||${t.asset||"other"}`)
+                      .reduce((a,b)=>b.n>a.n?b:a) : null;
+  const bestLabel = best ? best.key.split("||").join(" on ") : "—";
+  const g = [
+    ["30+ trades logged", m.n>=30, `${m.n} / 30 overall`],
+    ["One setup validated in one asset class", !!best && best.n>=30,
+      best?`best is ${bestLabel}: ${best.n} / 30`:"—"],
+    ["Positive expectancy", m.n>0 && m.expectancy>0, m.n?`${fmt(m.expectancy,2)}R per trade`:"—"],
+    ["Plan adherence above 90%", m.n>0 && m.adherence>0.9, m.n?`${(m.adherence*100).toFixed(0)}%`:"—"],
+    ["Max drawdown handled calmly", null, m.n?`${fmt(m.maxDD,1)}R peak-to-trough — only you can grade this one`:"—"]
+  ];
+  const pass = g.filter(x=>x[1]===true).length, hard = 4;
+  $("gates").innerHTML = g.map(([t,ok,s])=>
+    `<div class="gate"><div class="ic">${ok===true?"✅":ok===false?"❌":"🖊️"}</div>
+     <div class="tx"><div>${t}</div><div class="st">${s}</div></div></div>`).join("")
+    + `<div class="banner">${pass>=hard
+       ? "All four objective gates pass. The fifth is a judgment call only you can make — and the honest answer to \"did the drawdown bother me?\" is usually in the emotion notes, not the numbers."
+       : `<strong>${pass} of ${hard} objective gates pass.</strong> Real money is not on the table yet. This is the system working, not the system failing.`}</div>`;
+}
+
+// ---------- log table ----------
+function renderLog(m){
+  if(!m.n){ $("logTbl").innerHTML='<div class="empty">No trades yet</div>'; return; }
+  $("logTbl").innerHTML=`<table><thead><tr><th class="l">Date</th><th class="l">Symbol</th>
+    <th class="l">Class</th><th class="l">Setup</th>
+    <th class="l">Mode</th><th>Risk $</th><th>P&L $</th><th>R</th><th class="l">Plan</th><th class="l">Broke</th><th class="l">Note</th></tr></thead>
+    <tbody>${trades.map((t,i)=>`<tr><td class="l">${t.date}</td><td class="l">${t.ticker}</td>
+    <td class="l">${t.asset||"other"}</td><td class="l">${t.setup}</td>
+    <td class="l">${t.mode}</td><td>${t.risk.toFixed(2)}</td><td>${fmt(t.pnl)}</td><td>${fmt(m.R[i])}</td>
+    <td class="l">${t.plan}</td><td class="l">${t.broke||"—"}</td><td class="l">${t.note||"—"}</td></tr>`).join("")}</tbody></table>`;
+}
+
+// ---------- scale reality note ----------
+function renderScale(m){
+  const risk=0.50;
+  $("scaleNote").innerHTML = m.n
+    ? `At $50 with 1% risk, one R is about <strong>$0.50</strong>. Your ${fmt(m.totalR,1)}R
+       is roughly <strong>${(m.totalR*risk)<0?"−$":"$"}${Math.abs(m.totalR*risk).toFixed(2)}</strong>.
+       That number is meant to be small — you're buying data and reps, not income.
+       Judge this account on the hero metric at the top.`
+    : `At $50 with 1% risk, one R is about <strong>$0.50</strong>. Expect P&amp;L in coins.
+       That's the point: real emotions and real order entry at stakes where being wrong is cheap.`;
+}
+
+function render(){
+  const m=metrics();
+  renderHero(m); renderTiles(m); renderEq(m); renderBars(m);
+  renderClasses(m); renderSetups(m); renderGates(m); renderLog(m); renderScale(m);
+}
+
+// ---------- events ----------
+$("i_asset").innerHTML = CLASSES.map(c=>`<option value="${c}">${c}</option>`).join("");
+
+$("f").addEventListener("submit",e=>{
+  e.preventDefault();
+  const risk=parseFloat($("i_risk").value);
+  if(!(risk>0)){ alert("Risk $ must be greater than zero — R can't be computed without it."); return; }
+  trades.push({date:$("i_date").value,ticker:$("i_ticker").value.toUpperCase().trim(),
+    asset:$("i_asset").value,
+    setup:$("i_setup").value,mode:$("i_mode").value,risk,pnl:parseFloat($("i_pnl").value),
+    plan:$("i_plan").value,broke:$("i_broke").value.trim(),note:$("i_note").value.trim()});
+  const keepAsset=$("i_asset").value;      // stays put across entries in one session
+  e.target.reset();
+  $("i_asset").value=keepAsset;
+  $("i_date").valueAsDate=new Date(); render();
+});
+$("clearBtn").addEventListener("click",()=>{
+  if(confirm("Clear all trades? Export first if you want to keep them.")){ trades=[]; render(); }
+});
+$("themeBtn").addEventListener("click",()=>{
+  const d=document.documentElement.getAttribute("data-theme")==="dark";
+  document.documentElement.setAttribute("data-theme",d?"light":"dark");
+  $("themeBtn").textContent=d?"Dark mode":"Light mode";
+  render();
+});
+$("tableBtn").addEventListener("click",()=>{
+  const c=$("tableCard"), s=c.style.display==="none";
+  c.style.display=s?"block":"none"; $("tableBtn").textContent=s?"Hide table":"Show table";
+});
+$("csvBtn").addEventListener("click",()=>{
+  const m=metrics();
+  const head="date,symbol,asset_class,setup,mode,risk_dollars,pnl_dollars,result_r,plan_followed,rules_broken,emotion_note";
+  const esc=s=>`"${String(s??"").replace(/"/g,'""')}"`;
+  const body=trades.map((t,i)=>[t.date,t.ticker,t.asset||"other",t.setup,t.mode,t.risk.toFixed(2),
+    t.pnl.toFixed(2),(m.R[i]).toFixed(2),t.plan,t.broke,t.note].map(esc).join(",")).join("\n");
+  const url=URL.createObjectURL(new Blob([head+"\n"+body],{type:"text/csv"}));
+  const a=document.createElement("a"); a.href=url; a.download="trades.csv"; a.click(); URL.revokeObjectURL(url);
+});
+$("imp").addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    const lines=rd.result.split(/\r?\n/).filter(l=>l.trim());
+    const cols=lines[0].split(",").map(s=>s.trim().replace(/^"|"$/g,""));
+    // Accept aliases so pre-multi-asset exports still import: symbol/ticker, and
+    // asset_class absent entirely (older files predate the column).
+    const pick=(c,...names)=>{
+      for(const n of names){ const i=cols.indexOf(n); if(i>=0 && c[i]!==undefined) return c[i]; }
+      return undefined;
+    };
+    const parsed=[];
+    for(let i=1;i<lines.length;i++){
+      const c=lines[i].match(/("([^"]|"")*"|[^,]*)(,|$)/g).map(s=>s.replace(/,$/,"").replace(/^"|"$/g,"").replace(/""/g,'"'));
+      const risk=parseFloat(pick(c,"risk_dollars"));
+      if(!(risk>0)) continue;
+      const rawAsset=(pick(c,"asset_class","asset")||"").trim().toLowerCase();
+      parsed.push({date:pick(c,"date"),ticker:pick(c,"symbol","ticker"),
+        asset:CLASSES.includes(rawAsset)?rawAsset:"other",
+        setup:pick(c,"setup")||"Other",
+        mode:pick(c,"mode")||"paper",risk,pnl:parseFloat(pick(c,"pnl_dollars"))||0,
+        plan:pick(c,"plan_followed")||"no",broke:pick(c,"rules_broken")||"",
+        note:pick(c,"emotion_note")||""});
+    }
+    if(!parsed.length){ alert("No valid rows found. Needs columns: date, symbol (or ticker), risk_dollars, pnl_dollars."); return; }
+    trades=parsed; render();
+  };
+  rd.readAsText(f); e.target.value="";
+});
+
+$("i_date").valueAsDate=new Date();
+render();
+</script>
+</body>
+</html>
