@@ -9,6 +9,7 @@ from app.risk.instruments import (
     UnknownInstrument,
     lots_to_units,
     min_account_for,
+    quote_conversion,
     point_value_for,
     profile_for,
     require_spec,
@@ -26,7 +27,7 @@ from app.risk.instruments import UnknownBrokerProfile
 # --------------------------------------------------------------------------
 
 def test_exact_symbol_beats_class_default():
-    spec = spec_for("XAGUSD", AssetClass.metals)
+    spec = spec_for("XAGUSD", AssetClass.metals, broker="exness_standard")
     assert spec.symbol == "XAGUSD"
     assert spec.is_class_default is False
     assert spec.min_size == 50.0
@@ -37,7 +38,7 @@ def test_symbol_lookup_is_case_insensitive():
 
 
 def test_unlisted_symbol_uses_class_default():
-    spec = spec_for("WIFUSD", AssetClass.crypto_meme)
+    spec = spec_for("WIFUSD", AssetClass.crypto_meme, broker="exness_standard")
     assert spec.is_class_default is True
     assert spec.asset_class == AssetClass.crypto_meme
 
@@ -59,7 +60,7 @@ def test_every_asset_class_has_a_default():
 # --------------------------------------------------------------------------
 
 def test_round_size_floors_to_step():
-    spec = spec_for("EURUSD")
+    spec = spec_for("EURUSD", broker="exness_standard")
     assert round_size(20_437.3, spec) == 20_000.0
     assert round_size(999.0, spec) == 0.0          # below the 1,000-unit minimum
     assert round_size(-5.0, spec) == 0.0
@@ -76,7 +77,7 @@ def test_float_noise_does_not_cost_a_whole_step():
 
 def test_genuine_shortfall_still_floors_down():
     """The epsilon must not mask a real gap: 19,500 is meaningfully short of 20,000."""
-    spec = spec_for("EURUSD")
+    spec = spec_for("EURUSD", broker="exness_standard")
     assert round_size(19_500.0, spec) == 19_000.0
 
 
@@ -114,7 +115,7 @@ def test_point_value_defaults_to_one_for_unknown_symbols():
 
 def test_spot_instruments_all_have_unit_point_value():
     for symbol in ("EURUSD", "XAUUSD", "XAGUSD", "BTCUSD", "US30"):
-        assert spec_for(symbol).point_value == 1.0, symbol
+        assert spec_for(symbol, broker="exness_standard").point_value == 1.0, symbol
 
 
 # --------------------------------------------------------------------------
@@ -122,7 +123,9 @@ def test_spot_instruments_all_have_unit_point_value():
 # --------------------------------------------------------------------------
 
 def test_default_profile_is_the_live_broker():
-    assert profile_for().key == "exness_standard"
+    # The live account is Exness Standard CENT, so that is what an unqualified
+    # lookup must resolve to — sizing against Standard lots would be 100x too big.
+    assert profile_for().key == "exness_cent"
     assert profile_for("exness").key == "exness_standard"   # alias
     assert profile_for("EXNESS_CENT").key == "exness_cent"
 
@@ -208,15 +211,16 @@ def test_all_broker_profile_specs_are_marked_unverified():
 # --------------------------------------------------------------------------
 
 def test_units_and_lots_round_trip():
-    spec = spec_for("EURUSD")
+    spec = spec_for("EURUSD", broker="exness_standard")
     assert units_to_lots(20_000.0, spec) == 0.2
     assert lots_to_units(0.2, spec) == 20_000.0
 
 
 def test_lot_conversion_per_asset_class():
-    assert units_to_lots(20_000.0, spec_for("EURUSD")) == 0.2      # 100k units/lot
-    assert units_to_lots(1.0, spec_for("XAUUSD")) == 0.01          # 100 oz/lot
-    assert units_to_lots(50.0, spec_for("XAGUSD")) == 0.01         # 5,000 oz/lot
+    std = lambda sym: spec_for(sym, broker="exness_standard")      # noqa: E731
+    assert units_to_lots(20_000.0, std("EURUSD")) == 0.2           # 100k units/lot
+    assert units_to_lots(1.0, std("XAUUSD")) == 0.01               # 100 oz/lot
+    assert units_to_lots(50.0, std("XAGUSD")) == 0.01              # 5,000 oz/lot
     assert units_to_lots(3.0, spec_for("MES", broker="generic")) == 3.0  # contracts are lots
 
 
@@ -247,3 +251,70 @@ def test_zero_and_degenerate_inputs_are_safe():
     assert size_for_risk(100.0, 0.0, spec) == 0.0      # no stop distance
     assert size_for_risk(0.0, 0.005, spec) == 0.0      # no budget
     assert size_for_risk(-100.0, 0.005, spec) == 0.0   # negative budget
+
+
+# --------------------------------------------------------------------------
+# Quote-currency conversion
+# --------------------------------------------------------------------------
+
+def test_quote_currency_is_derived_from_the_pair_name():
+    assert spec_for("EURUSD", broker="exness_standard").quote_currency == "USD"
+    assert spec_for("USDJPY", broker="exness_standard").quote_currency == "JPY"
+    assert spec_for("EURGBP", broker="exness_standard").quote_currency == "GBP"
+
+
+def test_usd_quoted_pair_needs_no_conversion():
+    spec = spec_for("EURUSD", broker="exness_standard")
+    assert quote_conversion(spec, 1.15399) == 1.0
+
+
+def test_usd_base_pair_derives_its_own_rate():
+    """USDJPY quotes JPY, and the account currency is the base, so one JPY of
+    movement is worth 1/price dollars. Derivable from this pair alone."""
+    spec = spec_for("USDJPY", broker="exness_standard")
+    assert quote_conversion(spec, 155.20) == pytest.approx(1 / 155.20)
+
+
+def test_cross_pair_cannot_derive_a_rate_and_fails_closed():
+    """EURJPY needs USDJPY, which its own price cannot supply."""
+    spec = spec_for("EURJPY", broker="exness_standard")
+    assert quote_conversion(spec, 168.0) is None
+    assert quote_conversion(spec, 168.0, explicit_rate=1 / 155.20) == pytest.approx(1 / 155.20)
+
+
+def test_jpy_conversion_changes_the_size_by_the_rate():
+    """Without conversion a 0.30 JPY stop is treated as $0.30 — overstating risk
+    ~155x and undersizing by the same factor."""
+    spec = spec_for("USDJPY", broker="exness_cent")
+    stop, budget = 0.30, 0.50
+    unconverted = size_for_risk(budget, stop, spec, 1.0)
+    converted = size_for_risk(budget, stop, spec, 1 / 155.20)
+    assert unconverted == 0.0                      # falsely "does not fit"
+    assert converted >= spec.min_size
+    assert risk_for_size(stop, converted, spec, 1 / 155.20) <= budget + 1e-9
+
+
+# --------------------------------------------------------------------------
+# The cent account this system actually trades
+# --------------------------------------------------------------------------
+
+def test_cent_account_offers_forex_and_metals_only():
+    """Coverage is narrower than Standard. Instruments the account does not offer
+    must resolve to None so the risk gate refuses rather than sizing them."""
+    cent = "exness_cent"
+    for symbol, asset_class in (("US500", AssetClass.indices),
+                                ("USTEC", AssetClass.indices),
+                                ("BTCUSD", AssetClass.crypto_major),
+                                ("USOIL", AssetClass.commodities)):
+        assert spec_for(symbol, asset_class, broker=cent) is None, symbol
+    assert spec_for("EURUSD", broker=cent) is not None
+    assert spec_for("XAUUSD", broker=cent) is not None
+
+
+def test_cent_forex_uses_almost_all_of_a_fifty_dollar_budget():
+    spec = spec_for("EURUSD", broker="exness_cent")
+    budget = 0.50
+    size = size_for_risk(budget, 0.0020, spec)
+    assert size == 250.0
+    assert risk_for_size(0.0020, size, spec) == pytest.approx(0.50, abs=0.01)
+    assert units_to_lots(size, spec) == 0.25

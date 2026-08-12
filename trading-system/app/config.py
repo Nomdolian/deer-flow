@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # position size. "exness" resolves to exness_standard; set account_type="cent"
     # for a Standard Cent account, whose lot is 1,000 units instead of 100,000.
     broker: str = "exness"
-    account_type: str = ""
+    account_type: str = "cent"
 
     # Risk defaults — deliberately conservative. See PART 1 item 3 of the spec:
     # portfolio-level caps apply across ALL agents/strategies combined, not per-strategy.

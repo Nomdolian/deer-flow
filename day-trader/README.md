@@ -69,16 +69,20 @@ docs, with a test asserting the invariant.
 Contract specs are **per broker**, and the differences decide what a small account
 can reach. All trades here are taken on an Exness account, so:
 
-| Instrument | At $50 (1% = $0.50) | Needs |
-|---|---|---|
-| **EURUSD, Standard Cent** | ✅ the workhorse — 240 units, $0.48 risk on a 20-pip stop | ~$2 |
-| **US500** (S&P CFD) | ✅ 0.05 contracts on a 10-point stop | ~$10 |
-| **USTEC** (Nasdaq CFD) | ⚠️ only at the 0.01 minimum — 50 points is the widest stop that fits | ~$50 |
-| EURUSD, Standard/Pro/Zero | ❌ 1,000-unit minimum risks $2.00 | ~$200 |
-| USOIL | ❌ 10-barrel minimum | ~$500 |
-| BTCUSD | ❌ 0.01 BTC minimum risks ~$12.36 | ~$1,236 |
-| XAUUSD (gold) | ❌ 1 oz risks $15 | ~$1,500 |
-| XAGUSD (silver) | ❌ **50 oz** minimum | ~$2,500 |
+Account type is **Standard Cent**, which narrows it further: cent accounts carry
+forex and metals. Indices, crypto and energies are Standard/Pro/Zero instruments.
+
+| Instrument | At $50 (1% = $0.50) |
+|---|---|
+| **EURUSD** | ✅ the workhorse — 250 units (0.25 lots), $0.50 risk on 20 pips, **100% of budget** |
+| **GBPUSD** | ✅ 160 units, $0.48 on a 30-pip stop |
+| **USDJPY** | ✅ 250 units, $0.48 — JPY conversion applied automatically |
+| XAUUSD / XAGUSD | ⚠️ only if cent metals scale 100x like forex — **unverified** |
+| US500, USTEC, BTCUSD, USOIL | ❌ not offered on a cent account |
+| EURJPY, GBPJPY, other crosses | ❌ refused — needs a USD rate their own price can't supply |
+
+**So the working system is forex majors on a cent account.** Narrower than the
+seven-class framing this repo started from, and the honest answer for $50.
 
 Two Exness facts drive that whole table:
 

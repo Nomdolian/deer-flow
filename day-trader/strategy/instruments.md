@@ -66,24 +66,48 @@ Also: **Exness symbol names differ.** The S&P 500 is `US500` and the Nasdaq is
 `USTEC` — not `SPX500`/`NAS100`. WTI is `USOIL`. Sizing off another broker's ticker
 means sizing off specs that are not this account's.
 
-### What actually fits $50 on Exness
+### MY ACCOUNT TYPE IS STANDARD CENT
 
-Computed at live prices with realistic stops, 1% risk = $0.50:
+That narrows things further, in a way that matters: **a cent account's instrument
+coverage is not the full Exness catalogue.** Cent accounts carry forex and metals.
+Indices, crypto and energies are Standard/Pro/Zero instruments.
 
-| Instrument | Stop | Size | Risk | Verdict |
-|---|---|---|---|---|
-| **EURUSD, Standard Cent** | 20 pips | 240 units | $0.48 | ✅ **the workhorse** |
-| **US500** (S&P CFD) | 10 points | 0.05 contracts | $0.50 | ✅ works |
-| **USTEC** (Nasdaq CFD) | 50 points | 0.01 contracts | $0.50 | ⚠️ at the minimum |
-| EURUSD, Standard | 20 pips | 0 | — | ❌ needs ~$200 |
-| XAUUSD (gold) | $15 | 0 | — | ❌ needs ~$1,500 |
-| XAGUSD (silver) | $0.50 | 0 | — | ❌ 50 oz minimum |
-| BTCUSD | $1,236 | 0 | — | ❌ needs ~$1,236 |
-| USOIL | $0.50 | 0 | — | ❌ 10 bbl minimum |
+So `US500` and `USTEC` — which look viable on the Standard specs — are **not on
+this account at all**. The registry returns no spec for them and the risk gate
+refuses, which is correct: there is no such thing as the right size for an
+instrument you cannot trade.
 
-**So the plan is: nano-scale forex on a Standard Cent account, plus index CFDs.**
-Note `USTEC` sits exactly at its 0.01 minimum, which means a 50-point stop is the
-*widest* stop that fits — anything wider does not size, so check before planning it.
+Recomputed for the **cent** profile at live prices, 1% risk = $0.50:
+
+| Instrument | Stop | Size | Lots | Risk | Budget used | Verdict |
+|---|---|---|---|---|---|---|
+| **EURUSD** | 20 pips | 250 units | 0.25 | $0.50 | 100% | ✅ **the workhorse** |
+| **GBPUSD** | 30 pips | 160 units | 0.16 | $0.48 | 96% | ✅ works |
+| **USDJPY** | 30 pips | 250 units | 0.25 | $0.48 | 97% | ✅ works *(needs JPY conversion)* |
+| **XAUUSD** (gold) | $15 | 0.03 oz | 0.03 | $0.45 | 90% | ⚠️ *if* cent metals scale — verify |
+| **XAGUSD** (silver) | $0.50 | 1 oz | 0.02 | $0.50 | 100% | ⚠️ *if* cent metals scale — verify |
+| US500 / USTEC | — | — | — | — | — | ❌ **not on a cent account** |
+| BTCUSD | — | — | — | — | — | ❌ **not on a cent account** |
+| USOIL | — | — | — | — | — | ❌ **not on a cent account** |
+| EURJPY, GBPJPY, other crosses | — | — | — | — | — | ❌ refused: no USD conversion rate |
+
+**The plan is forex majors on the cent account.** That is a narrower system than the
+seven-asset-class framing this repo started with, and it is the honest answer for a
+$50 cent account — 100% of the risk budget used, at ~$0.50 a trade.
+
+Two entries carry real caveats:
+
+**Gold and silver depend on an unverified assumption.** I have encoded cent metals
+as scaling by the same 100x as forex (gold 1 lot = 1 oz, so 0.01 lot = 0.01 oz).
+**If that is wrong and cent gold is still 100 oz per lot, gold's minimum risks ~$15
+and is unreachable** — the table flips from ✅ to ❌. Verify before planning a gold
+trade.
+
+**JPY-quoted pairs need a conversion rate.** A 0.30 move on USDJPY is 0.30 *yen*
+(~$0.0019), not $0.30. `USDJPY`/`USDCAD`/`USDCHF` derive the rate from their own
+price, so they size correctly. Crosses like `EURJPY` need a third rate that their
+own price cannot supply, so the gate **refuses them** rather than undersizing by
+~155x. Wire a rate source before trading crosses.
 
 ### Settlement and regulation do not apply as written
 

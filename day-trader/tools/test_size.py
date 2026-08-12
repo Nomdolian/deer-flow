@@ -60,6 +60,25 @@ def test_floor_to_increment():
     assert floor_to_increment(-5, Decimal("1")) == Decimal("0")
 
 
+def test_float_noise_does_not_cost_a_whole_increment():
+    """Regression: abs(1.15399 - 1.15199) is 0.0019999999999998899, so a 250-unit
+    position computes as 249.99999999998. Flooring that to a 10-unit step returned
+    240 — a silent 4% shortfall, and a disagreement with the trading-system sizer
+    on the identical trade."""
+    r = size_position(50, 1.0, 1.15399, 1.15199, instrument="eurusd-cent")
+    assert r["units"] == 250
+    assert abs(r["actual_risk"] - 0.50) < 0.001
+    assert r["budget_used_pct"] > 99.9
+
+
+def test_genuine_shortfall_still_floors_down():
+    """The epsilon must not mask a real gap."""
+    from size import floor_to_increment
+    from decimal import Decimal
+    assert floor_to_increment(249.0, Decimal("10")) == Decimal("240")
+    assert floor_to_increment(19_500.0, Decimal("1000")) == Decimal("19000")
+
+
 def test_crypto_uses_the_entire_risk_budget():
     """Native fractional sizing is the reason crypto wastes no budget — this is
     the quantitative claim the docs make, so it is pinned here."""

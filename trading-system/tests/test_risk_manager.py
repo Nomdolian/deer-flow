@@ -55,7 +55,7 @@ def test_position_sizing_scales_with_current_equity(db_session):
 def test_size_is_reported_in_units_and_broker_lots(db_session):
     """EURUSD sizes in base-currency units; MT5 needs the same position in lots.
     20,000 units == 0.2 standard lots. Confusing the two is a 100,000x error."""
-    manager = RiskManager(risk_per_trade_pct=0.01)
+    manager = RiskManager(risk_per_trade_pct=0.01, broker="exness_standard")
     result = manager.evaluate(db_session, make_signal(), empty_portfolio(equity=10_000.0))
     assert result.accepted
     assert result.size_unit == "unit"
@@ -97,7 +97,7 @@ def test_size_below_minimum_increment_is_rejected_not_rounded_up(db_session):
 def test_silver_increment_blocks_the_trade(db_session):
     """XAGUSD's 0.01-lot minimum is 50 ounces, so the smallest possible silver
     position risks 50x the stop distance regardless of the price."""
-    manager = RiskManager(risk_per_trade_pct=0.01)
+    manager = RiskManager(risk_per_trade_pct=0.01, broker="exness_standard")
     signal = make_signal(instrument="XAGUSD", asset_class=AssetClass.metals,
                          entry=66.11, stop=65.61, tp=67.11)
     result = manager.evaluate(db_session, signal, empty_portfolio(equity=1_000.0))
@@ -109,7 +109,8 @@ def test_silver_increment_blocks_the_trade(db_session):
 def test_long_tail_symbol_falls_back_to_asset_class_default(db_session):
     """Meme tokens cannot be enumerated, so an unlisted symbol must still size —
     via the asset-class default, flagged so the decision stays auditable."""
-    manager = RiskManager(risk_per_trade_pct=0.01, meme_bucket_cap_pct=0.5)
+    manager = RiskManager(risk_per_trade_pct=0.01, meme_bucket_cap_pct=0.5,
+                          broker="exness_standard")
     signal = make_signal(instrument="WIFUSD", asset_class=AssetClass.crypto_meme)
     result = manager.evaluate(db_session, signal, empty_portfolio(equity=10_000.0))
     assert result.accepted
@@ -134,7 +135,7 @@ def test_exness_account_cannot_be_handed_a_cme_contract(db_session):
 def test_fifty_dollar_account_cannot_trade_exness_crypto(db_session):
     """A $50 account at 1% has $0.50 of budget. Exness's smallest BTCUSD position
     is 0.01 BTC, risking ~$12 on a realistic stop, so the gate must refuse."""
-    manager = RiskManager(risk_per_trade_pct=0.01)
+    manager = RiskManager(risk_per_trade_pct=0.01, broker="exness_standard")
     signal = make_signal(instrument="BTCUSD", asset_class=AssetClass.crypto_major,
                          entry=63736.0, stop=62500.0, tp=66208.0)
     result = manager.evaluate(db_session, signal, empty_portfolio(equity=50.0))
@@ -211,7 +212,10 @@ def test_correlation_group_cap_rejects_even_under_global_cap(db_session):
 
 
 def test_meme_bucket_isolated_from_core_portfolio_cap(db_session):
-    manager = RiskManager(risk_per_trade_pct=0.01, portfolio_risk_cap_pct=0.001, meme_bucket_cap_pct=0.05)
+    # Meme coins are not offered on a cent account, so the bucket logic is tested
+    # against a profile that carries them. On the live account this path is unreachable.
+    manager = RiskManager(risk_per_trade_pct=0.01, portfolio_risk_cap_pct=0.001,
+                          meme_bucket_cap_pct=0.05, broker="exness_standard")
     equity = 10_000.0
     # core portfolio cap is already effectively exhausted at 0.001 (=$10), but that must not block a meme trade
     portfolio = empty_portfolio(equity=equity)
@@ -222,7 +226,8 @@ def test_meme_bucket_isolated_from_core_portfolio_cap(db_session):
 
 
 def test_meme_bucket_cap_enforced_independently(db_session):
-    manager = RiskManager(risk_per_trade_pct=0.10, meme_bucket_cap_pct=0.05)
+    manager = RiskManager(risk_per_trade_pct=0.10, meme_bucket_cap_pct=0.05,
+                          broker="exness_standard")
     equity = 10_000.0
     existing = OpenPosition(instrument="PEPEUSD", asset_class=AssetClass.crypto_meme, strategy_id="x", risk_amount=400.0, correlation_group="meme_bucket")
     portfolio = PortfolioState(equity=equity, open_positions=[existing], daily_realized_pnl=0, daily_starting_equity=equity, weekly_realized_pnl=0, weekly_starting_equity=equity)
@@ -281,3 +286,57 @@ def test_consecutive_loss_counter_resets_on_win(db_session):
     db_session.refresh(strategy)
     assert strategy.consecutive_losses == 0
     assert not strategy.is_paused
+
+
+# --------------------------------------------------------------------------
+# The live account: Exness Standard Cent
+# --------------------------------------------------------------------------
+
+def test_configured_default_is_the_cent_account(db_session):
+    """An unqualified RiskManager must size against the cent account. Sizing the
+    same signal against Standard lots would be 100x too large."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    signal = make_signal(entry=1.15399, stop=1.15199, tp=1.15799)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=50.0))
+    assert result.accepted
+    assert result.size == 250.0            # units of base currency
+    assert result.size_lots == 0.25        # cent lots
+    assert result.risk_amount <= 0.50 + 1e-9
+
+
+def test_cent_account_refuses_instruments_it_does_not_offer(db_session):
+    """Indices, crypto and energies are not on a cent account, so there is no
+    correct size and the gate must refuse rather than fall back."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    for instrument, asset_class, entry, stop in (
+        ("US500", AssetClass.indices, 6800.0, 6790.0),
+        ("USTEC", AssetClass.indices, 24000.0, 23950.0),
+        ("BTCUSD", AssetClass.crypto_major, 63736.0, 62500.0),
+        ("USOIL", AssetClass.commodities, 81.96, 81.46),
+    ):
+        signal = make_signal(instrument=instrument, asset_class=asset_class,
+                             entry=entry, stop=stop, tp=entry + (entry - stop) * 2)
+        result = manager.evaluate(db_session, signal, empty_portfolio(equity=50.0))
+        assert not result.accepted, instrument
+        assert result.reason == "no_instrument_spec", (instrument, result.reason)
+
+
+def test_jpy_pair_sizes_correctly_after_conversion(db_session):
+    """USDJPY quotes JPY. Treating a 0.30 JPY stop as $0.30 overstates risk ~155x
+    and would falsely report that the trade does not fit a $50 account."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    signal = make_signal(instrument="USDJPY", entry=155.20, stop=154.90, tp=155.80)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=50.0))
+    assert result.accepted
+    assert result.risk_amount <= 0.50 + 1e-9
+    assert result.risk_amount > 0.10        # a real position, not a rounding crumb
+
+
+def test_cross_pair_fails_closed_without_a_conversion_rate(db_session):
+    """EURJPY needs a USDJPY rate its own price cannot supply. Undersizing by 155x
+    is still the wrong size, so the gate refuses until a rate source is wired."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    signal = make_signal(instrument="EURJPY", entry=168.00, stop=167.70, tp=168.60)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=50.0))
+    assert not result.accepted
+    assert result.reason == "quote_conversion_unavailable"

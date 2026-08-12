@@ -86,6 +86,10 @@ class InstrumentSpec:
     min_size: float = 0.01       # smallest order the broker accepts, in units
     size_step: float = 0.01      # size must be a whole multiple of this
     contract_size: float = 1.0   # units per broker "lot" (for lot-based APIs)
+    # Currency the price is quoted in. When this is not the account currency, a
+    # price movement is NOT money: a 0.30 move on USDJPY is 0.30 JPY (~$0.0019),
+    # not $0.30. Sizing without converting overstates risk ~155x on JPY pairs.
+    quote_currency: str = "USD"
     is_class_default: bool = False
     # False until reconciled against the live account by verify_broker_specs.py.
     verified: bool = False
@@ -115,10 +119,15 @@ class BrokerProfile:
 # ---------------------------------------------------------------------------
 
 def _fx(symbol: str, contract_size: float) -> InstrumentSpec:
-    """Unit = 1 unit of the base currency. min/step are the broker's 0.01 lot."""
+    """Unit = 1 unit of the base currency. min/step are the broker's 0.01 lot.
+
+    The quote currency is the second half of the pair name, which is what decides
+    whether a price movement is already money or needs converting.
+    """
     lot_001 = contract_size * 0.01
+    quote = symbol[3:6].upper() if len(symbol) >= 6 else "USD"
     return InstrumentSpec(symbol, AssetClass.forex, "unit", 1.0,
-                          lot_001, lot_001, contract_size)
+                          lot_001, lot_001, contract_size, quote_currency=quote)
 
 
 def _metal(symbol: str, contract_size: float) -> InstrumentSpec:
@@ -364,6 +373,36 @@ def point_value_for(instrument: str, asset_class: AssetClass | None = None,
     return spec.point_value if spec is not None else 1.0
 
 
+def quote_conversion(spec: InstrumentSpec, entry: float,
+                     account_currency: str = "USD",
+                     explicit_rate: float | None = None) -> float | None:
+    """Multiplier converting one unit of quote-currency movement into account money.
+
+    Returns None when the rate cannot be established, so callers fail closed rather
+    than mis-size. Three cases:
+
+    * Quote currency == account currency (EURUSD, XAUUSD on a USD account) -> 1.0.
+    * The pair IS the conversion (USDJPY, USDCAD, USDCHF on a USD account): the
+      account currency is the base, so one unit of quote buys 1/price of it.
+    * A cross (EURJPY, GBPJPY) needs a third rate that cannot be derived from this
+      pair's own price -> None unless supplied explicitly.
+    """
+    if explicit_rate is not None:
+        return explicit_rate if explicit_rate > 0 else None
+
+    quote = (spec.quote_currency or "").upper()
+    account = (account_currency or "USD").upper()
+    if quote == account:
+        return 1.0
+
+    if spec.asset_class == AssetClass.forex and len(spec.symbol) >= 6:
+        base = spec.symbol[0:3].upper()
+        if base == account and entry > 0:
+            return 1.0 / entry
+
+    return None
+
+
 def round_size(raw_size: float, spec: InstrumentSpec) -> float:
     """Floor a size to a tradeable multiple of `size_step`.
 
@@ -384,21 +423,28 @@ def round_size(raw_size: float, spec: InstrumentSpec) -> float:
     return size
 
 
-def size_for_risk(risk_amount: float, stop_distance: float, spec: InstrumentSpec) -> float:
-    """The whole point of this module: risk budget -> tradeable position size."""
-    if stop_distance <= 0 or spec.point_value <= 0:
+def size_for_risk(risk_amount: float, stop_distance: float, spec: InstrumentSpec,
+                  quote_rate: float = 1.0) -> float:
+    """The whole point of this module: risk budget -> tradeable position size.
+
+    `quote_rate` converts quote-currency movement into account money — 1.0 when the
+    quote currency is the account currency. Get it from `quote_conversion`.
+    """
+    if stop_distance <= 0 or spec.point_value <= 0 or quote_rate <= 0:
         return 0.0
-    return round_size(risk_amount / (stop_distance * spec.point_value), spec)
+    return round_size(risk_amount / (stop_distance * spec.point_value * quote_rate), spec)
 
 
-def risk_for_size(stop_distance: float, size: float, spec: InstrumentSpec) -> float:
+def risk_for_size(stop_distance: float, size: float, spec: InstrumentSpec,
+                  quote_rate: float = 1.0) -> float:
     """Money actually at risk for a given size. After flooring to the step this is
     lower than the requested budget, and it is what portfolio/correlation caps
     must be summed on — otherwise exposure is overstated."""
-    return abs(stop_distance) * size * spec.point_value
+    return abs(stop_distance) * size * spec.point_value * quote_rate
 
 
-def min_account_for(stop_distance: float, spec: InstrumentSpec, risk_pct: float) -> float:
+def min_account_for(stop_distance: float, spec: InstrumentSpec, risk_pct: float,
+                    quote_rate: float = 1.0) -> float:
     """Account equity at which the SMALLEST tradeable position equals `risk_pct`.
 
     The honest affordability answer: below this, the instrument cannot be traded
@@ -406,7 +452,7 @@ def min_account_for(stop_distance: float, spec: InstrumentSpec, risk_pct: float)
     """
     if risk_pct <= 0:
         return float("inf")
-    return (stop_distance * spec.min_size * spec.point_value) / risk_pct
+    return (stop_distance * spec.min_size * spec.point_value * quote_rate) / risk_pct
 
 
 def units_to_lots(size: float, spec: InstrumentSpec) -> float:

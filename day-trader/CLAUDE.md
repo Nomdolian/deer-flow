@@ -59,7 +59,8 @@ watchlist.
 | Daily max loss | **2%** ($1.00) |
 | Max trades/day | 3 — **the ONLY brake that exists on a CFD account** (see below) |
 | **Broker** | **Exness — MT5 CFD account.** Specs are broker-specific; see `strategy/instruments.md`. |
-| Tradeable at $50 | **EURUSD on a Standard Cent account, plus US500/USTEC index CFDs.** Nothing else fits. |
+| **Account type** | **Standard Cent** — 1 lot = 1,000 units, so 0.01 lot = 10 units. |
+| Tradeable at $50 | **Forex majors only** (EURUSD, GBPUSD, USDJPY). Indices/crypto/energies are not on a cent account. |
 | Status | **Process-building phase. No setup is paper-validated yet, in any class.** |
 
 ### My broker is Exness — this overrides the generic advice
@@ -75,21 +76,24 @@ change the plan:
    possible. On Standard, the same trade needs a ~$200 account.
 3. **No exchange-listed futures.** MES/MNQ/MCL/MGC are CME contracts and are not
    offered. Exness names differ too: the S&P is `US500`, the Nasdaq is `USTEC`.
+4. **My account is Standard CENT**, whose coverage is forex + metals only. Indices,
+   crypto and energies are Standard/Pro/Zero instruments — **not available to me.**
+   So the realistic system here is **forex majors**, and that is a narrower thing
+   than the seven-asset-class framing elsewhere in these files. Claude: don't plan
+   trades in classes this account cannot reach, even when the generic tables list them.
 
 ### Which instruments my account can actually reach
 
 Computed in `strategy/instruments.md` at live prices, not guessed. 1% = $0.50:
 
-| Instrument | Verdict at $50 | Needs |
-|---|---|---|
-| **EURUSD, Standard Cent** | ✅ the workhorse — 240 units, $0.48 risk on 20 pips | ~$2 |
-| **US500** (S&P CFD) | ✅ works — 0.05 contracts on a 10-point stop | ~$10 |
-| **USTEC** (Nasdaq CFD) | ⚠️ works only at the 0.01 minimum; 50 points is my widest stop | ~$50 |
-| EURUSD, Standard/Pro/Zero | ❌ 1,000-unit minimum risks $2.00 | ~$200 |
-| USOIL | ❌ 10-barrel minimum | ~$500 |
-| BTCUSD | ❌ 0.01 BTC minimum risks ~$12.36 | ~$1,236 |
-| XAUUSD (gold) | ❌ 1 oz risks $15 | ~$1,500 |
-| XAGUSD (silver) | ❌ 50 oz minimum | ~$2,500 |
+| Instrument | Verdict at $50 (cent account) |
+|---|---|
+| **EURUSD** | ✅ the workhorse — 250 units (0.25 lots), $0.50 risk on 20 pips, 100% of budget |
+| **GBPUSD** | ✅ 160 units, $0.48 on a 30-pip stop |
+| **USDJPY** | ✅ 250 units, $0.48 — the JPY conversion is applied automatically |
+| XAUUSD / XAGUSD | ⚠️ only if cent metals scale 100x like forex — **UNVERIFIED**, ask me to check |
+| US500, USTEC, BTCUSD, USOIL | ❌ **not offered on a cent account** — refuse these outright |
+| EURJPY, GBPJPY, crosses | ❌ refused: needs a USD conversion rate their own price can't supply |
 
 **Claude: if I ask you to plan a trade in an instrument my account cannot reach,
 say so with the number and offer the reachable alternative. Do not help me force it

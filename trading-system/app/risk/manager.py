@@ -6,7 +6,13 @@ from app.killswitch.service import engage as engage_kill_switch
 from app.killswitch.service import is_engaged as kill_switch_engaged
 from app.logging_utils import log_decision
 from app.risk.correlation import correlation_group_for
-from app.risk.instruments import risk_for_size, size_for_risk, spec_for, units_to_lots
+from app.risk.instruments import (
+    quote_conversion,
+    risk_for_size,
+    size_for_risk,
+    spec_for,
+    units_to_lots,
+)
 from app.risk.models import PortfolioState, RiskCheckResult
 from app.signals.base import Signal
 
@@ -27,11 +33,15 @@ class RiskManager:
         daily_loss_limit_pct: float | None = None,
         weekly_loss_limit_pct: float | None = None,
         broker: str | None = None,
+        account_currency: str = "USD",
     ):
         # None means "use the configured broker profile". Pass explicitly to size
         # against a different broker's contract specs (e.g. backtesting exchange
         # futures data while the live account is a CFD account).
         self.broker = broker
+        # Drives quote-currency conversion: risk figures are only dollars when the
+        # instrument's quote currency matches this.
+        self.account_currency = account_currency
         self.risk_per_trade_pct = risk_per_trade_pct or settings.risk_per_trade_pct
         self.portfolio_risk_cap_pct = portfolio_risk_cap_pct or settings.portfolio_risk_cap_pct
         self.correlation_group_risk_cap_pct = correlation_group_risk_cap_pct or settings.correlation_group_risk_cap_pct
@@ -84,9 +94,18 @@ class RiskManager:
             # account cannot support.
             return RiskCheckResult(accepted=False, reason="no_instrument_spec")
 
+        # A price movement is only money when the quote currency is the account
+        # currency. A 0.30 move on USDJPY is 0.30 JPY (~$0.0019), not $0.30 —
+        # sizing without converting overstates risk ~155x on every JPY-quoted pair.
+        quote_rate = quote_conversion(spec, signal.entry, self.account_currency)
+        if quote_rate is None:
+            # A cross needs a third rate this pair's own price cannot supply. Fail
+            # closed: undersizing by the rate is still the wrong size.
+            return RiskCheckResult(accepted=False, reason="quote_conversion_unavailable")
+
         size_multiplier = strategy_version.size_multiplier if strategy_version else 1.0
         risk_budget = portfolio.equity * self.risk_per_trade_pct * size_multiplier
-        size = size_for_risk(risk_budget, stop_distance, spec)
+        size = size_for_risk(risk_budget, stop_distance, spec, quote_rate)
         if size <= 0:
             # The smallest tradeable position risks more than the budget allows.
             # This is a legitimate "no trade", not an error to round away.
@@ -94,7 +113,7 @@ class RiskManager:
 
         # Flooring to the size step leaves actual risk at or below the budget. The
         # caps must be summed on what is really at risk, not on what was requested.
-        risk_amount = risk_for_size(stop_distance, size, spec)
+        risk_amount = risk_for_size(stop_distance, size, spec, quote_rate)
 
         if signal.asset_class == AssetClass.crypto_meme:
             return self._evaluate_meme_bucket(portfolio, signal, size, risk_amount, spec)

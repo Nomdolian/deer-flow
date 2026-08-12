@@ -32,7 +32,7 @@ Usage:
 import argparse
 import sys
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 
 DEFAULT_ACCOUNT = 50.00
 DEFAULT_RISK_PCT = 1.0
@@ -345,11 +345,19 @@ def resolve(key: str) -> Instrument:
 
 
 def floor_to_increment(value: float, increment: Decimal) -> Decimal:
-    """Floor a size down to a whole multiple of the tradeable increment."""
+    """Floor a size down to a whole multiple of the tradeable increment.
+
+    Stop distances arrive as binary-float subtractions: abs(1.15399 - 1.15199) is
+    0.0019999999999998899, which makes a 250-unit position compute as
+    249.99999999998... Flooring that directly drops a whole increment — 240 units
+    instead of 250, a silent 4% shortfall. Differences below a billionth of one
+    step are float noise, not a real shortfall, so the step count is snapped first.
+    """
     if value <= 0:
         return Decimal(0)
-    steps = (Decimal(str(value)) / increment).to_integral_value(rounding=ROUND_FLOOR)
-    return steps * increment
+    steps = (Decimal(str(value)) / increment).quantize(
+        Decimal("1e-9"), rounding=ROUND_HALF_UP)
+    return steps.to_integral_value(rounding=ROUND_FLOOR) * increment
 
 
 def fmt_units(units: Decimal, increment: Decimal) -> str:
