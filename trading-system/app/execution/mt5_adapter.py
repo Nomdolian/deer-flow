@@ -1,6 +1,7 @@
 from app.config import settings
 from app.db.models import Direction
 from app.execution.base import ExecutionAdapter, OpenPositionSnapshot, OrderRequest, OrderResult
+from app.risk.instruments import lots_to_units, spec_for, units_to_lots
 
 
 class MT5Adapter(ExecutionAdapter):
@@ -40,11 +41,24 @@ class MT5Adapter(ExecutionAdapter):
             return OrderResult(request.client_order_id, None, "rejected", error="no_tick_data")
         price = tick.ask if request.direction == Direction.long else tick.bid
 
+        # OrderRequest.size is in instrument UNITS; MT5 `volume` is in LOTS. For
+        # EURUSD those differ by 100,000, so passing size straight through would
+        # request a position five orders of magnitude too large. No asset_class is
+        # available here, so an unlisted symbol is rejected rather than guessed —
+        # this adapter can move real money.
+        spec = spec_for(request.instrument)
+        if spec is None:
+            return OrderResult(
+                request.client_order_id, None, "rejected",
+                error=f"no_contract_spec_for_{request.instrument}",
+            )
+        volume = units_to_lots(request.size, spec)
+
         result = mt5.order_send(
             {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": request.instrument,
-                "volume": request.size,
+                "volume": volume,
                 "type": order_type,
                 "price": price,
                 "sl": request.stop_loss,
@@ -113,11 +127,16 @@ class MT5Adapter(ExecutionAdapter):
         snapshots = []
         for pos in positions:
             direction = Direction.long if pos.type == mt5.ORDER_TYPE_BUY else Direction.short
+            # Convert MT5's lot volume back into units on the way in, so callers
+            # computing |entry - stop| * size get money rather than a lot-scaled
+            # number. Unknown symbols pass through unconverted (contract_size 1).
+            spec = spec_for(pos.symbol)
+            size_units = lots_to_units(pos.volume, spec) if spec is not None else pos.volume
             snapshots.append(
                 OpenPositionSnapshot(
                     instrument=pos.symbol,
                     direction=direction,
-                    size=pos.volume,
+                    size=size_units,
                     entry_price=pos.price_open,
                     stop_loss=pos.sl,
                     take_profit=pos.tp,

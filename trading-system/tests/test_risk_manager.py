@@ -39,13 +39,108 @@ def test_position_sizing_scales_with_current_equity(db_session):
     signal = make_signal()
     result = manager.evaluate(db_session, signal, empty_portfolio(equity=10_000.0))
     assert result.accepted
-    # risk_amount == equity * risk_pct; size == risk_amount / stop_distance
-    assert result.risk_amount == 100.0
+    # risk_amount is the money ACTUALLY at risk once the size has been floored to
+    # the instrument's step — not the requested budget. The two differ whenever
+    # rounding bites, and the caps must be summed on the former.
+    assert abs(result.risk_amount - 100.0) < 1e-6
     stop_distance = abs(signal.entry - signal.stop_loss)
-    assert abs(result.size - 100.0 / stop_distance) < 1e-9
+    assert abs(result.size - 100.0 / stop_distance) < 1.0  # 20,000 units of EURUSD
+    assert result.risk_amount <= 100.0 + 1e-6  # never more than the budget
 
     result2 = manager.evaluate(db_session, signal, empty_portfolio(equity=20_000.0))
-    assert result2.risk_amount == 200.0  # doubled equity -> doubled risk amount, not fixed lot size
+    # doubled equity -> doubled risk amount, not a fixed lot size
+    assert abs(result2.risk_amount - 200.0) < 1e-6
+
+
+def test_size_is_reported_in_units_and_broker_lots(db_session):
+    """EURUSD sizes in base-currency units; MT5 needs the same position in lots.
+    20,000 units == 0.2 standard lots. Confusing the two is a 100,000x error."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    result = manager.evaluate(db_session, make_signal(), empty_portfolio(equity=10_000.0))
+    assert result.accepted
+    assert result.size_unit == "unit"
+    assert abs(result.size - 20_000.0) < 1.0
+    assert abs(result.size_lots - 0.2) < 1e-6
+    assert result.point_value == 1.0
+    assert result.spec_is_class_default is False
+
+
+def test_contract_multiplier_divides_the_size(db_session):
+    """The bug this port fixes: one MES contract moves $5 per index point, so a
+    10-point stop risks $50 per contract. The equity formula (budget/stop) would
+    return 5 contracts and quietly risk 5x the budget."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    signal = make_signal(instrument="MES", asset_class=AssetClass.indices,
+                         entry=5000.0, stop=4990.0, tp=5020.0)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=50_000.0))
+    assert result.accepted
+    naive = (50_000.0 * 0.01) / 10.0          # = 50 contracts, the old wrong answer
+    assert naive == 50.0
+    assert result.size == 10.0                # 500 budget / (10 points * $5) = 10
+    assert result.point_value == 5.0
+    assert abs(result.risk_amount - 500.0) < 1e-6
+
+
+def test_size_below_minimum_increment_is_rejected_not_rounded_up(db_session):
+    """A single MES contract on a 10-point stop risks $50. On a $1,000 account at
+    1% ($10) that does not fit, and the gate must refuse rather than round to 1."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    signal = make_signal(instrument="MES", asset_class=AssetClass.indices,
+                         entry=5000.0, stop=4990.0, tp=5020.0)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=1_000.0))
+    assert not result.accepted
+    assert result.reason == "size_below_min_increment"
+    assert result.size is None
+
+
+def test_silver_increment_blocks_the_trade(db_session):
+    """XAGUSD's 0.01-lot minimum is 50 ounces, so the smallest possible silver
+    position risks 50x the stop distance regardless of the price."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    signal = make_signal(instrument="XAGUSD", asset_class=AssetClass.metals,
+                         entry=66.11, stop=65.61, tp=67.11)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=1_000.0))
+    # budget $10, smallest position risks 50 oz * $0.50 = $25
+    assert not result.accepted
+    assert result.reason == "size_below_min_increment"
+
+
+def test_long_tail_symbol_falls_back_to_asset_class_default(db_session):
+    """Meme tokens cannot be enumerated, so an unlisted symbol must still size —
+    via the asset-class default, flagged so the decision stays auditable."""
+    manager = RiskManager(risk_per_trade_pct=0.01, meme_bucket_cap_pct=0.5)
+    signal = make_signal(instrument="WIFUSD", asset_class=AssetClass.crypto_meme)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=10_000.0))
+    assert result.accepted
+    assert result.spec_is_class_default is True
+    assert result.size_unit == "token"
+
+
+def test_actual_risk_never_exceeds_budget_after_rounding(db_session):
+    """The invariant the whole module exists to protect, across every class."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    equity = 100_000.0
+    budget = equity * 0.01
+    cases = [
+        ("EURUSD", AssetClass.forex, 1.1000, 1.0950),
+        ("USDJPY", AssetClass.forex, 155.20, 154.90),
+        ("XAUUSD", AssetClass.metals, 4408.55, 4393.55),
+        ("XAGUSD", AssetClass.metals, 66.11, 65.61),
+        ("US30", AssetClass.indices, 46000.0, 45900.0),
+        ("MES", AssetClass.indices, 5000.0, 4990.0),
+        ("MCL", AssetClass.commodities, 81.96, 81.46),
+        ("BTCUSD", AssetClass.crypto_major, 63736.0, 62500.0),
+        ("DOGEUSD", AssetClass.crypto_meme, 0.31, 0.30),
+    ]
+    for instrument, asset_class, entry, stop in cases:
+        signal = make_signal(instrument=instrument, asset_class=asset_class,
+                             entry=entry, stop=stop, tp=entry + (entry - stop) * 2)
+        result = manager.evaluate(db_session, signal, empty_portfolio(equity=equity))
+        if not result.accepted:
+            assert result.reason == "size_below_min_increment", (instrument, result.reason)
+            continue
+        assert result.risk_amount <= budget + 1e-6, (instrument, result.risk_amount)
+        assert result.size > 0
 
 
 def test_portfolio_risk_cap_rejects_new_signal_over_ceiling(db_session):

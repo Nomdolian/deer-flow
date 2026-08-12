@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from app.db.models import Direction
 from app.execution.base import ExecutionAdapter, OpenPositionSnapshot, OrderRequest, OrderResult
+from app.risk.instruments import point_value_for
 
 
 @dataclass
@@ -122,7 +123,10 @@ class PaperAdapter(ExecutionAdapter):
 
     def _realize(self, position: _PaperPosition, exit_price: float) -> None:
         direction_mult = 1 if position.direction == Direction.long else -1
-        pnl = (exit_price - position.entry_price) * direction_mult * position.size
+        # Contract multiplier: 1.0 for spot, $5/point for an MES contract. Without
+        # it a futures paper account's balance diverges from the live one.
+        point_value = point_value_for(position.instrument)
+        pnl = (exit_price - position.entry_price) * direction_mult * position.size * point_value
         self.balance += pnl
         self.balance -= position.size * exit_price * self.commission_pct
 
@@ -131,7 +135,8 @@ class PaperAdapter(ExecutionAdapter):
         for position in self._positions.values():
             last = self._last_price.get(position.instrument, position.entry_price)
             direction_mult = 1 if position.direction == Direction.long else -1
-            unrealized = (last - position.entry_price) * direction_mult * position.size
+            unrealized = ((last - position.entry_price) * direction_mult * position.size
+                          * point_value_for(position.instrument))
             snapshots.append(
                 OpenPositionSnapshot(
                     instrument=position.instrument,

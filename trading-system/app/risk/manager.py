@@ -6,6 +6,7 @@ from app.killswitch.service import engage as engage_kill_switch
 from app.killswitch.service import is_engaged as kill_switch_engaged
 from app.logging_utils import log_decision
 from app.risk.correlation import correlation_group_for
+from app.risk.instruments import risk_for_size, size_for_risk, spec_for, units_to_lots
 from app.risk.models import PortfolioState, RiskCheckResult
 from app.signals.base import Signal
 
@@ -66,17 +67,35 @@ class RiskManager:
         if portfolio.equity <= 0:
             return RiskCheckResult(accepted=False, reason="invalid_equity")
 
+        # The contract specification, not the bare stop distance, determines size.
+        # An MES contract moves $5 per index point, so `risk_budget / stop_distance`
+        # would return 5x too many contracts; and broker size steps mean a raw
+        # fractional size is not a placeable order. See app/risk/instruments.py.
+        spec = spec_for(signal.instrument, signal.asset_class)
+        if spec is None:
+            # Fail closed. An unknown asset class means we cannot reason about the
+            # contract, and guessing would place a real order at the wrong size.
+            return RiskCheckResult(accepted=False, reason="no_instrument_spec")
+
         size_multiplier = strategy_version.size_multiplier if strategy_version else 1.0
-        risk_amount = portfolio.equity * self.risk_per_trade_pct * size_multiplier
-        size = risk_amount / stop_distance
+        risk_budget = portfolio.equity * self.risk_per_trade_pct * size_multiplier
+        size = size_for_risk(risk_budget, stop_distance, spec)
+        if size <= 0:
+            # The smallest tradeable position risks more than the budget allows.
+            # This is a legitimate "no trade", not an error to round away.
+            return RiskCheckResult(accepted=False, reason="size_below_min_increment")
+
+        # Flooring to the size step leaves actual risk at or below the budget. The
+        # caps must be summed on what is really at risk, not on what was requested.
+        risk_amount = risk_for_size(stop_distance, size, spec)
 
         if signal.asset_class == AssetClass.crypto_meme:
-            return self._evaluate_meme_bucket(portfolio, signal, size, risk_amount)
+            return self._evaluate_meme_bucket(portfolio, signal, size, risk_amount, spec)
 
-        return self._evaluate_core_portfolio(portfolio, signal, size, risk_amount)
+        return self._evaluate_core_portfolio(portfolio, signal, size, risk_amount, spec)
 
     def _evaluate_meme_bucket(
-        self, portfolio: PortfolioState, signal: Signal, size: float, risk_amount: float
+        self, portfolio: PortfolioState, signal: Signal, size: float, risk_amount: float, spec
     ) -> RiskCheckResult:
         # Isolated bucket: losses here cannot cascade into core position sizing,
         # and core-portfolio exposure never blocks a meme trade or vice versa (Phase 3, item 4).
@@ -91,10 +110,20 @@ class RiskManager:
             risk_amount=risk_amount,
             portfolio_risk_after_pct=(meme_open_risk + risk_amount) / portfolio.equity,
             correlation_group="meme_bucket",
+            **self._spec_fields(size, spec),
         )
 
+    @staticmethod
+    def _spec_fields(size: float, spec) -> dict:
+        return {
+            "size_unit": spec.unit,
+            "size_lots": units_to_lots(size, spec),
+            "point_value": spec.point_value,
+            "spec_is_class_default": spec.is_class_default,
+        }
+
     def _evaluate_core_portfolio(
-        self, portfolio: PortfolioState, signal: Signal, size: float, risk_amount: float
+        self, portfolio: PortfolioState, signal: Signal, size: float, risk_amount: float, spec
     ) -> RiskCheckResult:
         core_positions = [p for p in portfolio.open_positions if p.asset_class != AssetClass.crypto_meme]
         core_open_risk = sum(p.risk_amount for p in core_positions)
@@ -115,6 +144,7 @@ class RiskManager:
             risk_amount=risk_amount,
             portfolio_risk_after_pct=(core_open_risk + risk_amount) / portfolio.equity,
             correlation_group=group,
+            **self._spec_fields(size, spec),
         )
 
     def _get_strategy_version(self, session: Session, signal: Signal) -> StrategyVersion | None:

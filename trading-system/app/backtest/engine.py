@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from app.data.schema import Candle
 from app.db.models import Direction
+from app.risk.instruments import point_value_for, size_for_risk, spec_for
 from app.signals.base import Signal, SignalEngine
 
 
@@ -84,8 +85,15 @@ class BacktestEngine:
             if stop_distance <= 0 or equity <= 0:
                 continue
 
-            risk_amount = equity * cfg.risk_per_trade_pct
-            size = risk_amount / stop_distance
+            # Size through the same contract-spec path the live RiskManager uses,
+            # including the broker size step. A backtest that sizes in unattainable
+            # fractional positions overstates the edge it is meant to prove.
+            spec = spec_for(signal.instrument, signal.asset_class)
+            if spec is None:
+                continue
+            size = size_for_risk(equity * cfg.risk_per_trade_pct, stop_distance, spec)
+            if size <= 0:
+                continue  # instrument does not fit the account at this stop distance
 
             spread_half = signal.entry * cfg.spread_pct / 2
             slip = signal.entry * cfg.slippage_pct
@@ -119,11 +127,15 @@ class BacktestEngine:
             return None
 
         direction_mult = 1 if signal.direction == Direction.long else -1
-        gross_pnl = (hit_price - position["entry_price"]) * direction_mult * position["size"]
+        # Price movement becomes money via the contract multiplier: 1.0 for spot
+        # instruments, but $5 per index point for MES. Omitting it understates a
+        # futures backtest's P&L and R-multiples by the multiplier.
+        point_value = point_value_for(signal.instrument, signal.asset_class)
+        gross_pnl = (hit_price - position["entry_price"]) * direction_mult * position["size"] * point_value
         commission = position["size"] * (position["entry_price"] + hit_price) * cfg.commission_pct
         pnl = gross_pnl - commission
 
-        risk_amount = abs(position["entry_price"] - signal.stop_loss) * position["size"]
+        risk_amount = abs(position["entry_price"] - signal.stop_loss) * position["size"] * point_value
         r_multiple = pnl / risk_amount if risk_amount else 0.0
 
         return BacktestTrade(

@@ -12,6 +12,7 @@ from app.journal.service import record_trade_close, record_trade_open
 from app.killswitch.service import KillSwitchEngaged, assert_not_engaged
 from app.logging_utils import log_decision
 from app.risk.correlation import correlation_group_for
+from app.risk.instruments import point_value_for
 from app.risk.manager import RiskManager
 from app.risk.models import OpenPosition, PortfolioState
 from app.signals.base import SignalEngine
@@ -160,7 +161,8 @@ class Orchestrator:
                 instrument=p.instrument,
                 asset_class=self.engines[0].asset_class,
                 strategy_id="",
-                risk_amount=abs(p.entry_price - p.stop_loss) * p.size,
+                risk_amount=(abs(p.entry_price - p.stop_loss) * p.size
+                             * point_value_for(p.instrument, self.engines[0].asset_class)),
                 correlation_group=correlation_group_for(p.instrument),
             )
             for p in self.execution.get_open_positions()

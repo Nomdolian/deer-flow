@@ -25,6 +25,9 @@ and isn't" before connecting anything to a live account.**
 - **The Risk Manager is the single authoritative gate.** No signal engine,
   execution adapter, or LLM call can place or size an order directly. See
   `app/risk/manager.py`.
+- **Position size comes from the instrument's contract specification**, never
+  from `budget / stop_distance`. See "Sizing across asset classes" below —
+  getting this wrong is silent, and it scales with the contract multiplier.
 - **Fail closed, everywhere.** Missing data, an API error, a stale feed, or
   the kill switch halts new trading for the affected instrument/strategy — it
   never proceeds with a guess. See `assert_not_engaged`, `is_stale`, and the
@@ -82,7 +85,7 @@ slow — and that's fine, because they're never on the critical execution path.
 | 0 — Foundations | ✅ | DB models, structured decision log, global kill switch with auto-triggers |
 | 1 — Data layer | ✅ (forex) | Unified `Candle` schema, `DataProvider` interface, CSV provider (backtest/bootstrap), MT5 live provider, feed health/staleness monitor |
 | 2 — Signal engines | ✅ | SMC/ICT engine (BOS/CHoCH, order blocks, FVG, liquidity sweeps, premium/discount), EMA/RSI/ATR indicator engine, isolated meme-momentum engine |
-| 3 — Risk manager | ✅ | Equity-scaled position sizing, portfolio exposure cap, correlation-group caps, isolated meme bucket, daily/weekly loss limits (auto kill switch), consecutive-loss circuit breaker |
+| 3 — Risk manager | ✅ | Contract-spec-aware position sizing (`app/risk/instruments.py`), portfolio exposure cap, correlation-group caps, isolated meme bucket, daily/weekly loss limits (auto kill switch), consecutive-loss circuit breaker |
 | 4 — Execution layer | ✅ | Common adapter interface, idempotent client-order-IDs, fully functional `PaperAdapter` simulator, `MT5Adapter` (Windows/live only) |
 | 5 — Memory/journal | ✅ | Trade journal, LLM-assisted post-trade classification (async), weekly stats job, mechanical strategy down-weighting/pausing |
 | 6 — LLM analyst | ✅ | Claude API client, thesis synthesis + contradiction flagging, weekly mistake-pattern report |
@@ -109,7 +112,7 @@ app/
   killswitch/            global kill switch service
   data/                  Candle schema, DataProvider interface, CSV + MT5 providers, feed health
   signals/               SMC/ICT engine, indicator engine, meme engine — pure functions
-  risk/                  RiskManager, correlation groups, position sizing
+  risk/                  RiskManager, correlation groups, instrument contract specs, position sizing
   execution/              ExecutionAdapter interface, PaperAdapter, MT5Adapter
   journal/                trade journal, classification, weekly stats/weighting
   llm_analyst/            Claude API client, thesis synthesis, mistake reports
@@ -122,6 +125,50 @@ scripts/
   run_live_paper.py        run the orchestrator loop against a live/CSV feed through PaperAdapter
 tests/                     pytest suite (signal engines, risk manager, backtester, execution, orchestrator)
 ```
+
+## Sizing across asset classes
+
+`size` throughout this codebase is expressed in instrument **units**, under one
+convention:
+
+```
+money moved = |price movement| x size x point_value
+```
+
+`point_value` is 1.0 for retail spot instruments (a unit of base currency, an
+ounce of gold, a coin, a share) and the contract multiplier for futures. All of it
+lives in `app/risk/instruments.py`, which the risk manager, backtester, journal
+and execution adapters share.
+
+**Why this is not just `budget / stop_distance`.** That formula is only right when
+one unit gains $1 per 1.00 of price movement and any fractional size is tradeable.
+With a $500 budget and a 10-point stop:
+
+| Instrument | `budget/stop` | Would really risk | Correct size | Risk |
+|---|---|---|---|---|
+| EURUSD (spot) | 100,000 units | $500 | 100,000 units | $500 |
+| MES ($5/point) | 50 contracts | **$2,500** | 10 contracts | $500 |
+| MGC ($10/point) | 33.33 contracts | **$5,000** | 3 contracts | $450 |
+| MCL ($100 per $1.00) | 1,000 contracts | **$50,000** | 10 contracts | $500 |
+
+Nothing rejects those trades — they are placed, at 5x, 10x and 100x the intended
+risk. The registry also enforces broker size steps (0.01 lot on EURUSD is 1,000
+units, so 20,437.3 units is not an order) and refuses to round a sub-minimum size
+up: `XAGUSD`'s 0.01-lot minimum is **50 ounces**, so the smallest possible silver
+position risks 50x the stop distance, and the gate returns
+`size_below_min_increment` rather than a position the budget cannot support.
+
+**Units vs lots.** MT5's `order_send` takes volume in **lots**. 100,000 units of
+EURUSD is 1.00 lot, not 100,000 — a five-orders-of-magnitude difference. The
+conversion happens in `MT5Adapter` via `units_to_lots`, and `RiskCheckResult`
+carries `size_lots` alongside `size` so the two are never confused. An unlisted
+symbol is rejected there rather than guessed.
+
+**Adding an instrument.** Add an `InstrumentSpec` to `INSTRUMENTS` with values from
+your broker's contract specification. Long-tail symbols (meme tokens) fall back to
+a per-asset-class default and are flagged `spec_is_class_default` so the decision
+stays auditable. Margins are deliberately absent: they change per broker, and a
+guessed margin in a risk gate is worse than none.
 
 ## Setup
 

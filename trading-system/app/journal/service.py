@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import OrderRecord, SignalRecord, TradeJournalRecord
 from app.logging_utils import log_decision
+from app.risk.instruments import point_value_for
 from app.risk.manager import record_trade_result
 
 
@@ -38,8 +39,10 @@ def record_trade_close(session: Session, trade_id: str, exit_price: float) -> Tr
         raise ValueError(f"unknown trade {trade_id}")
 
     direction_mult = 1 if trade.direction.value == "long" else -1
-    pnl = (exit_price - trade.entry_price) * direction_mult * trade.size
-    risk_amount = abs(trade.entry_price - trade.stop_loss) * trade.size
+    # Price movement -> money needs the contract multiplier (1.0 for spot).
+    point_value = point_value_for(trade.instrument, trade.asset_class)
+    pnl = (exit_price - trade.entry_price) * direction_mult * trade.size * point_value
+    risk_amount = abs(trade.entry_price - trade.stop_loss) * trade.size * point_value
     r_multiple = pnl / risk_amount if risk_amount else 0.0
 
     trade.exit_price = exit_price
