@@ -4,5 +4,9 @@ __pycache__/
 .env
 .pytest_cache/
 .ruff_cache/
-data/
+# Anchored to the repo root on purpose: this is meant to exclude local market-data
+# dumps (./data/*.csv), and an unanchored "data/" also matches the app/data source
+# package at any depth — which silently left app/data/ uncommitted and made the
+# whole package unimportable.
+/data/
 *.egg-info/
