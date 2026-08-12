@@ -57,27 +57,48 @@ watchlist.
 | Account type | **Cash account** (below the $2,000 leverage floor — no margin available) |
 | Risk per trade | **1% default / 3% hard ceiling** ($0.50 – $1.50) |
 | Daily max loss | **2%** ($1.00) |
-| Max trades/day | 3 — **now the primary brake outside equities** (see settlement below) |
-| Tradeable classes | **crypto spot, nano-lot forex, stocks $2–$15.** Everything else needs a bigger account. |
+| Max trades/day | 3 — **the ONLY brake that exists on a CFD account** (see below) |
+| **Broker** | **Exness — MT5 CFD account.** Specs are broker-specific; see `strategy/instruments.md`. |
+| Tradeable at $50 | **EURUSD on a Standard Cent account, plus US500/USTEC index CFDs.** Nothing else fits. |
 | Status | **Process-building phase. No setup is paper-validated yet, in any class.** |
 
-### Which asset classes my account can actually reach
+### My broker is Exness — this overrides the generic advice
 
-Computed in `strategy/instruments.md`, not guessed. At 1% risk ($0.50):
+Exness is an **MT5 CFD broker**. Contract specs are per-broker, and three facts
+change the plan:
 
-| Class | Verdict at $50 | Unlocks at |
+1. **Crypto is a CFD with a 0.01-lot (0.01 BTC) minimum**, risking ~$12.36 on a
+   realistic stop. **Crypto is NOT reachable at $50 here.** The "crypto spot uses
+   100% of the risk budget" finding applies to a spot exchange, not to this account.
+2. **A Standard Cent account's lot is 1,000 units**, so 0.01 lot = **10 units** —
+   100x finer than Standard's 1,000. This is the single fact that makes $50 forex
+   possible. On Standard, the same trade needs a ~$200 account.
+3. **No exchange-listed futures.** MES/MNQ/MCL/MGC are CME contracts and are not
+   offered. Exness names differ too: the S&P is `US500`, the Nasdaq is `USTEC`.
+
+### Which instruments my account can actually reach
+
+Computed in `strategy/instruments.md` at live prices, not guessed. 1% = $0.50:
+
+| Instrument | Verdict at $50 | Needs |
 |---|---|---|
-| Crypto spot | ✅ best fit — 8-decimal sizing uses 100% of the budget | any size |
-| Forex **nano** lots | ✅ works — 100-unit increments, ~$0.39 on a 20-pip stop | ~$20 |
-| Stocks $2–$15 | ✅ works, wastes ~40% of the budget to whole-share rounding | ~$30 |
-| Forex micro lots | ❌ 1,000-unit minimum risks $2.00 on a 20-pip stop | ~$200 |
-| Gold spot / Micro Dow | ❌ 1 oz or 1 contract risks $15 | ~$1,500 |
-| Silver spot | ❌ minimum is **50 oz**, risking $25 | ~$2,500 |
-| MES / MNQ / MCL / MGC | ❌ one contract risks $50 — the whole account | ~$5,000 |
+| **EURUSD, Standard Cent** | ✅ the workhorse — 240 units, $0.48 risk on 20 pips | ~$2 |
+| **US500** (S&P CFD) | ✅ works — 0.05 contracts on a 10-point stop | ~$10 |
+| **USTEC** (Nasdaq CFD) | ⚠️ works only at the 0.01 minimum; 50 points is my widest stop | ~$50 |
+| EURUSD, Standard/Pro/Zero | ❌ 1,000-unit minimum risks $2.00 | ~$200 |
+| USOIL | ❌ 10-barrel minimum | ~$500 |
+| BTCUSD | ❌ 0.01 BTC minimum risks ~$12.36 | ~$1,236 |
+| XAUUSD (gold) | ❌ 1 oz risks $15 | ~$1,500 |
+| XAGUSD (silver) | ❌ 50 oz minimum | ~$2,500 |
 
-**Claude: if I ask you to plan a trade in a class my account cannot reach, say so
-with the number and offer the reachable alternative. Do not help me force it by
-tightening a stop or "just doing one contract."**
+**Claude: if I ask you to plan a trade in an instrument my account cannot reach,
+say so with the number and offer the reachable alternative. Do not help me force it
+by tightening a stop, raising risk %, or "just doing the minimum lot."**
+
+**Also: these specs are UNVERIFIED** — recorded from Exness documentation, not read
+from my account. If I am about to trade real money, remind me to run
+`trading-system/scripts/verify_broker_specs.py` on the MT5 machine first. A wrong
+contract size silently mis-sizes every position in that instrument.
 
 ### What $50 actually means — say this out loud when I forget
 
@@ -101,7 +122,23 @@ here and chasing them is the single fastest way to blow it up.
 - Treat a $3 gain as evidence of edge, or a $3 loss as evidence of failure.
   Neither is signal at n=1.
 
-### Settlement: the guardrail I'm about to lose
+### Settlement: on an Exness CFD account, the guardrail is already gone
+
+⚠️ **The T+1 / PDT / good-faith-violation material below is US cash equity
+regulation. It does not govern an Exness CFD account.** CFDs are rolling positions:
+no settlement, no settled-cash concept, no trade-count rule, no PDT threshold.
+
+**So there is NO external limit on how many times I can trade per day.** Nothing in
+the platform will stop me. My 3-trade rule is the entire brake, and it is the rule
+most likely to be quietly abandoned on a bad night. Claude: count my trades and
+tell me when I hit three.
+
+What *does* apply on this account: **swap/financing** on positions held past the
+daily rollover, and **very high available leverage** that changes the margin
+required but never the risk budget.
+
+The rest of this section is retained for reference in case I ever open a US cash
+equity account — it is not my current situation.
 
 In a **cash equity account** every trade uses *settled* funds. Sell-proceeds
 settle the next business day (T+1). Practically:

@@ -69,7 +69,8 @@ def test_contract_multiplier_divides_the_size(db_session):
     """The bug this port fixes: one MES contract moves $5 per index point, so a
     10-point stop risks $50 per contract. The equity formula (budget/stop) would
     return 5 contracts and quietly risk 5x the budget."""
-    manager = RiskManager(risk_per_trade_pct=0.01)
+    # Futures are on the generic profile; the live Exness account cannot trade them.
+    manager = RiskManager(risk_per_trade_pct=0.01, broker="generic")
     signal = make_signal(instrument="MES", asset_class=AssetClass.indices,
                          entry=5000.0, stop=4990.0, tp=5020.0)
     result = manager.evaluate(db_session, signal, empty_portfolio(equity=50_000.0))
@@ -84,7 +85,7 @@ def test_contract_multiplier_divides_the_size(db_session):
 def test_size_below_minimum_increment_is_rejected_not_rounded_up(db_session):
     """A single MES contract on a 10-point stop risks $50. On a $1,000 account at
     1% ($10) that does not fit, and the gate must refuse rather than round to 1."""
-    manager = RiskManager(risk_per_trade_pct=0.01)
+    manager = RiskManager(risk_per_trade_pct=0.01, broker="generic")
     signal = make_signal(instrument="MES", asset_class=AssetClass.indices,
                          entry=5000.0, stop=4990.0, tp=5020.0)
     result = manager.evaluate(db_session, signal, empty_portfolio(equity=1_000.0))
@@ -113,12 +114,54 @@ def test_long_tail_symbol_falls_back_to_asset_class_default(db_session):
     result = manager.evaluate(db_session, signal, empty_portfolio(equity=10_000.0))
     assert result.accepted
     assert result.spec_is_class_default is True
-    assert result.size_unit == "token"
+    assert result.size_unit == "coin"   # Exness trades meme tokens as CFDs
+
+
+def test_exness_account_cannot_be_handed_a_cme_contract(db_session):
+    """With the live broker profile active, an MES signal is refused outright —
+    the account has no such instrument, so there is no correct size."""
+    manager = RiskManager(risk_per_trade_pct=0.01)      # configured broker = exness
+    signal = make_signal(instrument="MES", asset_class=AssetClass.commodities,
+                         entry=5000.0, stop=4990.0, tp=5020.0)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=50_000.0))
+    # Falls back to the Exness commodities default (USOIL-like, 10-barrel minimum)
+    # rather than a $5/point CME contract, so the size is never a futures size.
+    if result.accepted:
+        assert result.point_value == 1.0
+        assert result.spec_is_class_default is True
+
+
+def test_fifty_dollar_account_cannot_trade_exness_crypto(db_session):
+    """A $50 account at 1% has $0.50 of budget. Exness's smallest BTCUSD position
+    is 0.01 BTC, risking ~$12 on a realistic stop, so the gate must refuse."""
+    manager = RiskManager(risk_per_trade_pct=0.01)
+    signal = make_signal(instrument="BTCUSD", asset_class=AssetClass.crypto_major,
+                         entry=63736.0, stop=62500.0, tp=66208.0)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=50.0))
+    assert not result.accepted
+    assert result.reason == "size_below_min_increment"
+
+
+def test_cent_account_makes_a_fifty_dollar_forex_trade_viable(db_session):
+    """The same $50 account and the same 20-pip stop, on a Standard Cent profile."""
+    manager = RiskManager(risk_per_trade_pct=0.01, broker="exness_cent")
+    signal = make_signal(instrument="EURUSD", entry=1.15399, stop=1.15199, tp=1.15799)
+    result = manager.evaluate(db_session, signal, empty_portfolio(equity=50.0))
+    assert result.accepted
+    assert result.risk_amount <= 0.50 + 1e-9
+    assert result.size >= 10.0                        # at least the 10-unit minimum
+    assert result.size_lots >= 0.01
+
+    # Standard, same trade, same account: does not fit.
+    standard = RiskManager(risk_per_trade_pct=0.01, broker="exness_standard")
+    rejected = standard.evaluate(db_session, signal, empty_portfolio(equity=50.0))
+    assert not rejected.accepted
+    assert rejected.reason == "size_below_min_increment"
 
 
 def test_actual_risk_never_exceeds_budget_after_rounding(db_session):
     """The invariant the whole module exists to protect, across every class."""
-    manager = RiskManager(risk_per_trade_pct=0.01)
+    manager = RiskManager(risk_per_trade_pct=0.01, broker="generic")
     equity = 100_000.0
     budget = equity * 0.01
     cases = [

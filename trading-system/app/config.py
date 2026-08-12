@@ -7,6 +7,14 @@ class Settings(BaseSettings):
     env: str = "development"
     database_url: str = "postgresql+psycopg://trading:trading@localhost:5432/trading"
 
+    # Broker profile driving instrument contract specs (app/risk/instruments.py).
+    # Specs are NOT universal: the same ticker has different minimums, steps and
+    # contract sizes per broker and per account type, and those differences decide
+    # position size. "exness" resolves to exness_standard; set account_type="cent"
+    # for a Standard Cent account, whose lot is 1,000 units instead of 100,000.
+    broker: str = "exness"
+    account_type: str = ""
+
     # Risk defaults — deliberately conservative. See PART 1 item 3 of the spec:
     # portfolio-level caps apply across ALL agents/strategies combined, not per-strategy.
     risk_per_trade_pct: float = 0.0025

@@ -262,6 +262,77 @@ ALIASES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Exness (MT5 CFD broker) — the account these trades are actually taken on.
+#
+# Specs differ per broker, and the differences decide what a small account can
+# reach. Two that invert the generic conclusions:
+#
+#   * Crypto is a CFD with a 0.01-lot floor (0.01 BTC), NOT the 8-decimal spot
+#     sizing above. That is ~$12 of risk on a realistic stop, so the "crypto uses
+#     100% of the budget" result holds on a spot exchange and NOT here.
+#   * A Standard Cent account's lot is 1,000 units, so 0.01 lot is 10 units of
+#     base currency — 100x finer than Standard, and what makes $50 forex viable.
+#
+# Exness offers no exchange-listed futures, so MES/MCL/GC are absent by design.
+# Every value here is recorded from broker documentation, NOT read from the
+# account. Verify against MT5 symbol_info() before risking real money — see
+# strategy/instruments.md.
+# ---------------------------------------------------------------------------
+
+EXNESS_STANDARD: dict[str, Instrument] = {
+    "eurusd": Instrument("eurusd", "forex", "unit", 1.0, Decimal("1000"), 2000.0,
+                         "24/5, Sun 22:05 - Fri 21:59 UTC (server time)", "rolling CFD",
+                         "usd_majors", margin_required=True,
+                         notes=("Exness Standard: 1 lot = 100,000 units, min 0.01 lot = 1,000 units.",
+                                "A 20-pip stop on the 1,000-unit minimum risks $2.00 — needs a "
+                                "~$200 account at 1%.")),
+    "eurusd-cent": Instrument("eurusd-cent", "forex", "unit", 1.0, Decimal("10"), 2000.0,
+                              "24/5, Sun 22:05 - Fri 21:59 UTC (server time)", "rolling CFD",
+                              "usd_majors", margin_required=True,
+                              notes=("Exness Standard CENT: 1 lot = 1,000 units, min 0.01 lot = "
+                                     "10 units — 100x finer than Standard.",
+                                     "A 20-pip stop on 10 units risks $0.02. THIS is the "
+                                     "instrument a $50 account can actually risk-size.")),
+    "xauusd-exness": Instrument("xauusd-exness", "metals", "ounce", 1.0, Decimal("1"), 2000.0,
+                                "23/5, daily break", "rolling CFD", "metals",
+                                margin_required=True,
+                                notes=("Exness gold: 1 lot = 100 oz, min 0.01 lot = 1 oz.",
+                                       "A $15 stop risks $15 on the minimum — needs ~$1,500.")),
+    "xagusd-exness": Instrument("xagusd-exness", "metals", "ounce", 1.0, Decimal("50"), 2000.0,
+                                "23/5, daily break", "rolling CFD", "metals",
+                                margin_required=True,
+                                notes=("Exness silver: 1 lot = 5,000 oz, so min 0.01 lot = 50 oz.",)),
+    "btcusd-exness": Instrument("btcusd-exness", "crypto", "coin", 1.0, Decimal("0.01"), 200.0,
+                                "24/7", "rolling CFD", "crypto_majors",
+                                margin_required=True,
+                                notes=("Exness crypto CFD: contract size 1, min 0.01 lot = 0.01 BTC.",
+                                       "NOT spot 8-decimal sizing. ~$637 notional and ~$12 risk on "
+                                       "a $1,236 stop — needs a ~$1,200 account at 1%.")),
+    "us500": Instrument("us500", "indices", "contract", 1.0, Decimal("0.01"), 200.0,
+                        "nearly 24/5", "rolling CFD", "us_indices", margin_required=True,
+                        notes=("Exness names the S&P 500 US500 and the Nasdaq USTEC — not "
+                               "SPX500/NAS100. Sizing off another broker's ticker means sizing "
+                               "off specs that are not this account's.",)),
+    "ustec": Instrument("ustec", "indices", "contract", 1.0, Decimal("0.01"), 200.0,
+                        "nearly 24/5", "rolling CFD", "us_indices", margin_required=True,
+                        notes=("Exness Nasdaq 100 CFD.",)),
+    "usoil": Instrument("usoil", "commodities", "barrel", 1.0, Decimal("10"), 200.0,
+                        "nearly 24/5", "rolling CFD", "energy", margin_required=True,
+                        notes=("Exness WTI: 1 lot = 1,000 barrels, min 0.01 lot = 10 barrels.",
+                               "A $0.50 stop risks $5 on the minimum — needs a ~$500 account.")),
+}
+
+REGISTRY.update(EXNESS_STANDARD)
+ALIASES.update({
+    "exness-fx": "eurusd", "exness-forex": "eurusd",
+    "cent": "eurusd-cent", "exness-cent": "eurusd-cent", "forex-cent": "eurusd-cent",
+    "exness-gold": "xauusd-exness", "exness-silver": "xagusd-exness",
+    "exness-btc": "btcusd-exness", "exness-crypto": "btcusd-exness",
+    "exness-oil": "usoil", "spx": "us500", "nasdaq": "ustec",
+})
+
+
 def resolve(key: str) -> Instrument:
     k = key.strip().lower()
     k = ALIASES.get(k, k)

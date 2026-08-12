@@ -26,7 +26,12 @@ class RiskManager:
         meme_bucket_cap_pct: float | None = None,
         daily_loss_limit_pct: float | None = None,
         weekly_loss_limit_pct: float | None = None,
+        broker: str | None = None,
     ):
+        # None means "use the configured broker profile". Pass explicitly to size
+        # against a different broker's contract specs (e.g. backtesting exchange
+        # futures data while the live account is a CFD account).
+        self.broker = broker
         self.risk_per_trade_pct = risk_per_trade_pct or settings.risk_per_trade_pct
         self.portfolio_risk_cap_pct = portfolio_risk_cap_pct or settings.portfolio_risk_cap_pct
         self.correlation_group_risk_cap_pct = correlation_group_risk_cap_pct or settings.correlation_group_risk_cap_pct
@@ -71,10 +76,12 @@ class RiskManager:
         # An MES contract moves $5 per index point, so `risk_budget / stop_distance`
         # would return 5x too many contracts; and broker size steps mean a raw
         # fractional size is not a placeable order. See app/risk/instruments.py.
-        spec = spec_for(signal.instrument, signal.asset_class)
+        spec = spec_for(signal.instrument, signal.asset_class, self.broker)
         if spec is None:
-            # Fail closed. An unknown asset class means we cannot reason about the
-            # contract, and guessing would place a real order at the wrong size.
+            # Fail closed. Either the broker does not offer this asset class (asking
+            # a CFD broker for a CME contract, or a Cent account for crypto) or the
+            # class is unrecognised. Guessing would place a real order at a size the
+            # account cannot support.
             return RiskCheckResult(accepted=False, reason="no_instrument_spec")
 
         size_multiplier = strategy_version.size_multiplier if strategy_version else 1.0

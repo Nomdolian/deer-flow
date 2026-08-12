@@ -8,7 +8,9 @@ from app.risk.instruments import (
     INSTRUMENTS,
     UnknownInstrument,
     lots_to_units,
+    min_account_for,
     point_value_for,
+    profile_for,
     require_spec,
     risk_for_size,
     round_size,
@@ -16,6 +18,7 @@ from app.risk.instruments import (
     spec_for,
     units_to_lots,
 )
+from app.risk.instruments import UnknownBrokerProfile
 
 
 # --------------------------------------------------------------------------
@@ -94,8 +97,9 @@ def test_size_is_always_a_multiple_of_the_step():
 
 def test_point_value_scales_size_down():
     """10-point stop on MES ($5/pt) risks $50 per contract, so a $500 budget buys
-    10 contracts — not the 50 the equity formula would return."""
-    spec = spec_for("MES")
+    10 contracts — not the 50 the equity formula would return. Futures live on the
+    generic profile; the live Exness account cannot trade them."""
+    spec = spec_for("MES", broker="generic")
     assert spec.point_value == 5.0
     assert size_for_risk(500.0, 10.0, spec) == 10.0
     assert risk_for_size(10.0, 10.0, spec) == 500.0
@@ -105,12 +109,98 @@ def test_point_value_defaults_to_one_for_unknown_symbols():
     """Keeps P&L math unchanged for anything not in the registry."""
     assert point_value_for("SOMETHING_NEW") == 1.0
     assert point_value_for("EURUSD") == 1.0
-    assert point_value_for("MCL") == 100.0
+    assert point_value_for("MCL", broker="generic") == 100.0
 
 
 def test_spot_instruments_all_have_unit_point_value():
     for symbol in ("EURUSD", "XAUUSD", "XAGUSD", "BTCUSD", "US30"):
         assert spec_for(symbol).point_value == 1.0, symbol
+
+
+# --------------------------------------------------------------------------
+# Broker profiles — specs are per broker, and the differences change conclusions
+# --------------------------------------------------------------------------
+
+def test_default_profile_is_the_live_broker():
+    assert profile_for().key == "exness_standard"
+    assert profile_for("exness").key == "exness_standard"   # alias
+    assert profile_for("EXNESS_CENT").key == "exness_cent"
+
+
+def test_unknown_profile_is_rejected():
+    with pytest.raises(UnknownBrokerProfile):
+        profile_for("some_broker_we_never_configured")
+
+
+def test_exness_does_not_offer_exchange_futures():
+    """A CFD broker has no CME contracts. Asking for one must fail closed rather
+    than fall back to an asset-class default and size an untradeable contract."""
+    assert spec_for("MES", AssetClass.indices, broker="exness") is not None  # class default
+    assert spec_for("MES", broker="exness") is None                          # no exact spec
+    assert spec_for("MES", broker="generic").point_value == 5.0
+
+
+def test_exness_index_symbols_differ_from_generic_names():
+    """Exness names the S&P 500 US500 and the Nasdaq USTEC. Sizing off another
+    broker's ticker means sizing off a spec that is not this account's."""
+    assert spec_for("US500", broker="exness") is not None
+    assert spec_for("USTEC", broker="exness") is not None
+    assert spec_for("SPX500", broker="exness") is None
+    assert spec_for("NAS100", broker="exness") is None
+
+
+def test_exness_crypto_is_a_cfd_not_spot_sizing():
+    """The correction that matters most for a small account: a spot exchange sizes
+    BTC to 8 decimals, so any budget fits. Exness's 0.01-lot floor is 0.01 BTC."""
+    exness = spec_for("BTCUSD", broker="exness")
+    spot = spec_for("BTCUSD", broker="generic")
+    assert exness.min_size == 0.01
+    assert spot.min_size == 0.0001
+    assert exness.min_size / spot.min_size == 100.0
+
+    stop = 1236.0
+    # $0.50 of budget buys a position on the exchange but not at the broker.
+    assert size_for_risk(0.50, stop, spot) > 0
+    assert size_for_risk(0.50, stop, exness) == 0.0
+    # Risk carried by the smallest possible Exness position:
+    assert abs(risk_for_size(stop, exness.min_size, exness) - 12.36) < 0.01
+
+
+def test_cent_account_lot_is_a_hundred_times_finer():
+    """A cent lot is 1,000 units, so 0.01 lot is 10 units rather than 1,000. This is
+    what makes forex reachable on a small account."""
+    standard = spec_for("EURUSD", broker="exness_standard")
+    cent = spec_for("EURUSD", broker="exness_cent")
+    assert standard.contract_size == 100_000.0
+    assert cent.contract_size == 1_000.0
+    assert standard.min_size == 1_000.0
+    assert cent.min_size == 10.0
+
+    stop = 0.0020            # 20 pips
+    budget = 0.50            # 1% of a $50 account
+    assert size_for_risk(budget, stop, standard) == 0.0     # cannot fit
+    assert size_for_risk(budget, stop, cent) > 0            # fits comfortably
+
+
+def test_min_account_gives_the_honest_affordability_threshold():
+    """Below this equity the instrument cannot be traded without breaking the risk
+    rule, and no amount of leverage changes it."""
+    cent = spec_for("EURUSD", broker="exness_cent")
+    standard = spec_for("EURUSD", broker="exness_standard")
+    btc = spec_for("BTCUSD", broker="exness")
+
+    assert min_account_for(0.0020, cent, 0.01) == pytest.approx(2.0, abs=0.01)
+    assert min_account_for(0.0020, standard, 0.01) == pytest.approx(200.0, abs=0.01)
+    assert min_account_for(1236.0, btc, 0.01) == pytest.approx(1236.0, abs=1.0)
+
+
+def test_all_broker_profile_specs_are_marked_unverified():
+    """Broker specs are recorded from documentation, not read from the account.
+    They stay unverified until scripts/verify_broker_specs.py reconciles them
+    against MT5 symbol_info() — a wrong contract_size silently mis-sizes."""
+    for key in ("exness_standard", "exness_cent"):
+        for symbol, spec in profile_for(key).specs.items():
+            assert spec.verified is False, symbol
 
 
 # --------------------------------------------------------------------------
@@ -127,7 +217,7 @@ def test_lot_conversion_per_asset_class():
     assert units_to_lots(20_000.0, spec_for("EURUSD")) == 0.2      # 100k units/lot
     assert units_to_lots(1.0, spec_for("XAUUSD")) == 0.01          # 100 oz/lot
     assert units_to_lots(50.0, spec_for("XAGUSD")) == 0.01         # 5,000 oz/lot
-    assert units_to_lots(3.0, spec_for("MES")) == 3.0              # contracts are lots
+    assert units_to_lots(3.0, spec_for("MES", broker="generic")) == 3.0  # contracts are lots
 
 
 # --------------------------------------------------------------------------

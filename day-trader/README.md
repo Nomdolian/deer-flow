@@ -64,27 +64,53 @@ So the contract spec — point value, minimum increment, capital requirement,
 session, settlement — lives in one registry, used by both the calculator and the
 docs, with a test asserting the invariant.
 
-## What a $50 account can actually trade
+## Broker: Exness (MT5 CFD) — this decides what's tradeable
 
-Computed from the registry at live prices, not assumed. Full table in
-`strategy/instruments.md`.
+Contract specs are **per broker**, and the differences decide what a small account
+can reach. All trades here are taken on an Exness account, so:
 
-| Class | At $50 | Unlocks at |
+| Instrument | At $50 (1% = $0.50) | Needs |
 |---|---|---|
-| **Crypto spot** | ✅ best fit — 8-decimal sizing uses **100%** of the risk budget | any size |
-| **Forex, nano lots** | ✅ works — 100-unit increments, ~$0.39 on a 20-pip stop | ~$20 |
-| **Stocks $2–$15** | ✅ works, but whole-share rounding wastes ~40% of the budget | ~$30 |
-| Forex micro lots | ❌ 1,000-unit minimum risks $2.00 | ~$200 |
-| Gold spot / Micro Dow | ❌ 1 oz or 1 contract risks $15 | ~$1,500 |
-| Silver spot | ❌ minimum is **50 oz** → $25 risked | ~$2,500 |
-| MES / MNQ / MCL / MGC | ❌ one contract risks $50 — the whole account | ~$5,000 |
+| **EURUSD, Standard Cent** | ✅ the workhorse — 240 units, $0.48 risk on a 20-pip stop | ~$2 |
+| **US500** (S&P CFD) | ✅ 0.05 contracts on a 10-point stop | ~$10 |
+| **USTEC** (Nasdaq CFD) | ⚠️ only at the 0.01 minimum — 50 points is the widest stop that fits | ~$50 |
+| EURUSD, Standard/Pro/Zero | ❌ 1,000-unit minimum risks $2.00 | ~$200 |
+| USOIL | ❌ 10-barrel minimum | ~$500 |
+| BTCUSD | ❌ 0.01 BTC minimum risks ~$12.36 | ~$1,236 |
+| XAUUSD (gold) | ❌ 1 oz risks $15 | ~$1,500 |
+| XAGUSD (silver) | ❌ **50 oz** minimum | ~$2,500 |
 
-Three of seven classes are reachable. The tool returns **0** for the rest and says
-why, which is the correct answer rather than an obstacle to route around.
+Two Exness facts drive that whole table:
 
-The silver case is the instructive one: it's not blocked by the price ($66/oz) but
-by the **increment** — 1 lot is 5,000 oz, so the smallest position is 50 ounces.
-Always check the increment before the price.
+**A Standard Cent lot is 1,000 units, not 100,000** — so the 0.01-lot minimum is
+**10 units** of base currency rather than 1,000. That single fact is the difference
+between $50 forex being viable and needing $200.
+
+**Crypto is a CFD with a 0.01-lot floor, not 8-decimal spot sizing.** This reverses
+the generic conclusion: on a spot exchange crypto uses 100% of the risk budget and
+fits any account; on Exness the smallest BTC position risks ~$12.36 and needs a
+~$1,200 account. Exness also offers **no exchange-listed futures** (no MES/MCL/MGC),
+and names symbols its own way (`US500`/`USTEC`, not `SPX500`/`NAS100`).
+
+**These specs are unverified** — recorded from Exness documentation, not read from
+the account. A wrong contract size is invisible: the order fills, the sizer believes
+it risked 1%, and real exposure is off by the ratio of the error. Reconcile against
+MT5's own numbers before trading real money:
+
+```bash
+python trading-system/scripts/verify_broker_specs.py --broker exness_cent
+```
+
+The generic table for spot exchanges and CME futures is still in
+`strategy/instruments.md` for comparison. The silver case there remains the most
+instructive: it's blocked not by the price ($66/oz) but by the **increment** — 1 lot
+is 5,000 oz, so the smallest position is 50 ounces. Always check the increment
+before the price.
+
+**Regulatory note:** the FINRA/PDT/T+1 sections in this repo are US *cash equity*
+regulation and do not govern a CFD account. No settlement, no PDT rule, no
+good-faith violations — and therefore **no external cap on trades per day at all**.
+The max-3-trades rule is the only brake that exists here.
 
 ## Three things multi-asset changes about the rules
 

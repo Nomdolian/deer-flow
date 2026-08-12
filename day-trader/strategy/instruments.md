@@ -34,7 +34,103 @@ python3 tools/size.py --list          # every instrument the tool knows
 
 ---
 
-## What actually fits a $50 account
+## MY BROKER IS EXNESS — read this before the generic tables below
+
+All trades are taken on an **Exness** account. Exness is an **MT5 CFD broker**, and
+that changes the answers, because contract specs are per-broker, not universal.
+
+Three consequences that invert conclusions elsewhere in this file:
+
+**1. Crypto is a CFD, not spot. This kills the crypto plan.**
+The generic table below says crypto spot is the best fit for a small account,
+because 8-decimal sizing uses 100% of the risk budget. Exness trades crypto as a
+CFD with a **0.01-lot minimum = 0.01 BTC** — about $637 of notional, risking
+**~$12.36** on a $1,236 stop. That needs a **~$1,236 account** at 1% risk.
+**Crypto is out of reach at $50 on this broker.** The 100%-budget finding applies
+to a spot exchange (Coinbase, Kraken, Binance), not here.
+
+**2. A Standard Cent account is the difference between viable and not.**
+On Exness, a cent lot is **1,000 units**, not 100,000. So the 0.01-lot minimum is
+**10 units** of base currency instead of 1,000 — one hundred times finer:
+
+| Account type | 1 lot | Min 0.01 lot | Risk on a 20-pip stop | Needs |
+|---|---|---|---|---|
+| Standard / Pro / Zero | 100,000 units | 1,000 units | $2.00 | ~$200 |
+| **Standard Cent** | 1,000 units | **10 units** | **$0.02** | **~$2** |
+
+**3. No exchange-listed futures.** MES, MNQ, MCL, MGC and friends are CME
+contracts; Exness offers CFDs. The futures rows in the tables below are not
+tradeable on this account. The tool returns no spec and refuses to size them.
+
+Also: **Exness symbol names differ.** The S&P 500 is `US500` and the Nasdaq is
+`USTEC` — not `SPX500`/`NAS100`. WTI is `USOIL`. Sizing off another broker's ticker
+means sizing off specs that are not this account's.
+
+### What actually fits $50 on Exness
+
+Computed at live prices with realistic stops, 1% risk = $0.50:
+
+| Instrument | Stop | Size | Risk | Verdict |
+|---|---|---|---|---|
+| **EURUSD, Standard Cent** | 20 pips | 240 units | $0.48 | ✅ **the workhorse** |
+| **US500** (S&P CFD) | 10 points | 0.05 contracts | $0.50 | ✅ works |
+| **USTEC** (Nasdaq CFD) | 50 points | 0.01 contracts | $0.50 | ⚠️ at the minimum |
+| EURUSD, Standard | 20 pips | 0 | — | ❌ needs ~$200 |
+| XAUUSD (gold) | $15 | 0 | — | ❌ needs ~$1,500 |
+| XAGUSD (silver) | $0.50 | 0 | — | ❌ 50 oz minimum |
+| BTCUSD | $1,236 | 0 | — | ❌ needs ~$1,236 |
+| USOIL | $0.50 | 0 | — | ❌ 10 bbl minimum |
+
+**So the plan is: nano-scale forex on a Standard Cent account, plus index CFDs.**
+Note `USTEC` sits exactly at its 0.01 minimum, which means a 50-point stop is the
+*widest* stop that fits — anything wider does not size, so check before planning it.
+
+### Settlement and regulation do not apply as written
+
+The FINRA/PDT/T+1 material in `CLAUDE.md` and `risk-rules.md` is **US cash equity
+regulation**. An Exness CFD account has:
+
+- **No T+1 settlement.** CFDs are rolling positions.
+- **No PDT rule, no $25K threshold, no good-faith violations.**
+- **No settled-cash concept at all.**
+
+Which means **every external brake on trade frequency is gone.** The max-3-trades
+rule is the only limit that exists. Overnight positions pay financing/swap, and
+Exness charges swap on positions held past the daily rollover.
+
+Two further cautions specific to this broker:
+
+- **Very high leverage is available.** That changes the margin required, never the
+  risk budget. At $50, leverage is only for reaching a tradeable increment — never
+  for a bigger position. A stop that gaps on a highly leveraged position can lose
+  more than the stop implied.
+- **Exness does not onboard US retail clients.** If any of the US regulatory
+  material was written on the assumption it governs this account, that assumption
+  needs checking.
+
+### These numbers are unverified — verify them before real money
+
+Every Exness figure above is recorded from broker documentation, **not read from
+the account**. Brokers change specs and vary them by region, account type and
+symbol suffix (some Exness account types append `m`/`z`, and `EURUSDm` can carry
+different terms from `EURUSD`).
+
+A wrong contract size is invisible: the order is accepted, the sizer believes it
+risked 1%, and the real exposure is off by the ratio of the error. MT5 publishes
+the authoritative values, so reconcile:
+
+```bash
+python trading-system/scripts/verify_broker_specs.py --broker exness_cent --suffix ""
+python trading-system/scripts/verify_broker_specs.py --json exness-specs.json
+```
+
+Run it on the machine where MT5 is logged in to the account you will trade. It
+compares contract size, minimum volume, volume step and tick value field by field
+and exits non-zero on any mismatch.
+
+---
+
+## What actually fits a $50 account (generic — see the Exness section above)
 
 Computed from the registry at live prices (12 Aug 2026: gold $4,408.55/oz,
 silver $66.11/oz, BTC $63,736, EURUSD 1.15399, WTI ~$81.96) using realistic
