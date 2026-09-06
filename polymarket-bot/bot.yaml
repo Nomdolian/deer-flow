@@ -1,0 +1,88 @@
+# Starter config. Everything here is deliberately conservative; the numbers
+# that move money live in this file so changes show up in a diff.
+mode: paper                 # paper | live — do not switch until phase 5
+host: https://clob.polymarket.com
+gamma_host: https://gamma-api.polymarket.com
+data_host: https://data-api.polymarket.com
+ws_host: wss://ws-subscriptions-clob.polymarket.com
+geoblock_url: https://polymarket.com/api/geoblock
+binance_ws: wss://stream.binance.com:9443/ws
+chain_id: 137
+signature_type: 0           # 0 EOA · 1 Magic · 2 Safe proxy (3 is unsupported, see README)
+db_path: pmbot.sqlite
+loop_interval_s: 1.0
+
+universe:
+  min_liquidity_usd: 25000
+  min_24h_volume_usd: 10000
+  max_spread_cents: 3
+  min_hours_to_resolution: 2
+  max_days_to_resolution: 45
+  max_markets: 60
+  refresh_seconds: 900
+  exclude_tags: ["mentions"]
+  prefer_tags: ["geopolitics"]
+  require_negrisk_known: true
+
+strategies:
+  s1_maker:
+    enabled: true
+    quote_size_usd: 20
+    max_inventory_usd: 100
+    requote_ticks: 1
+    quote_max_age_s: 30
+    half_spread_ticks: 1
+    pull_minutes_before_resolution: 30
+    volume_spike_multiple: 4.0
+  s2_arb:
+    enabled: true
+    min_edge_cents: 1.5
+    max_legs: 8
+    max_notional_usd: 250
+  s3_fairvalue:
+    enabled: false
+    min_edge_cents: 5
+    vol_lookback_min: 120
+    min_samples: 30
+    max_minutes_to_resolution: 120
+  s4_longshot:
+    enabled: false
+    price_band: [0.02, 0.06]
+    max_hours: 48
+    max_loss_per_event_usd: 25
+  s5_copy:
+    enabled: false
+    min_wallet_pnl_usd: 50000
+    max_latency_cents: 2
+    size_scalar: 0.05
+    wallets: []
+
+risk:
+  max_position_pct_per_market: 2
+  max_exposure_pct_per_event: 5
+  max_total_deployed_pct: 40
+  max_open_orders: 30
+  daily_loss_kill_pct: 3
+  max_consecutive_losses: 6
+  min_free_usdc: 25
+  kelly_fraction: 0.25
+  fee_adjusted_edge_min_cents: 1.5
+  edge_floor_cents_by_strategy:
+    s1_maker: 0.5             # makers pay no fee; their edge is spread capture
+  stale_book_max_ms: 1500
+  max_clock_skew_s: 5
+  ws_disconnect_flatten_s: 30
+  require_geoblock_pass: true
+  min_edge_per_day_cents: 0.05
+  per_strategy_cap_pct:
+    s1_maker: 20
+    s2_arb: 15
+    s3_fairvalue: 10
+    s4_longshot: 3
+    s5_copy: 5
+
+monitor:
+  telegram_enabled: true
+  heartbeat_minutes: 15
+  daily_summary_utc: "22:00"
+  health_port: 8787
