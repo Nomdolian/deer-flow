@@ -118,3 +118,45 @@ async def test_arb_group_is_sized_to_the_smallest_accepted_leg(bot):
     arb_orders = [o for o in bot.registry.orders.values() if o.strategy == "s2_arb"]
     assert len(arb_orders) == 2
     assert len({o.size for o in arb_orders}) == 1  # a set is a set: equal legs
+
+
+async def test_paper_mode_gets_its_simulated_bankroll(tmp_path):
+    # Paper mode cannot read a chain balance, and zero equity means every
+    # signal is vetoed for lack of capital — so the bankroll is configured.
+    from pmbot.config import BotConfig, Secrets
+    from pmbot.orchestrator import Bot
+
+    cfg = BotConfig(db_path=str(tmp_path / "p.sqlite"), paper_starting_usdc=250.0)
+    cfg.monitor.telegram_enabled = False
+    instance = Bot(cfg, Secrets())
+    await instance.db.connect()
+    try:
+        assert instance.ctx.portfolio.free_usdc == 0.0
+        # start() does the geoblock call; exercise just the paper branch of it.
+        instance.ctx.portfolio.free_usdc = cfg.paper_starting_usdc
+        assert instance.ctx.equity() == 250.0
+    finally:
+        await instance.db.close()
+        await instance.http.aclose()
+
+
+async def test_settlement_sweep_merges_before_redeeming(bot):
+    # Merging first frees capital that no longer needs an oracle at all.
+    order = []
+
+    async def merge():
+        order.append("merge")
+        return []
+
+    async def redeem():
+        order.append("redeem")
+        return []
+
+    bot.merger.sweep = merge
+    bot.redeemer.sweep = redeem
+    await bot.redeem()
+    assert order == ["merge", "redeem"]
+
+
+async def test_health_reports_the_venue(bot):
+    assert bot.health_snapshot()["venue"] == "international"

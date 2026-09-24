@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from pmbot.auth import authenticate, check_geoblock, clock_skew_seconds
+from pmbot.auth import GeoblockError, authenticate, check_geoblock, clock_skew_seconds
 from pmbot.config import BotConfig, Secrets
 from pmbot.data.clob_rest import ClobRestClient
 from pmbot.data.data_api import DataApiClient
@@ -25,7 +25,7 @@ from pmbot.data.ws_market import MarketFeed
 from pmbot.data.ws_user import UserFeed
 from pmbot.execution.engine import ExecutionEngine, Fill
 from pmbot.execution.paper import PaperExecutor
-from pmbot.execution.redeem import RedeemWorker
+from pmbot.execution.redeem import ChainRedeemer, RedeemWorker, SetMerger
 from pmbot.execution.registry import OrderRegistry
 from pmbot.fees import FeeTable
 from pmbot.monitor.health import HealthServer
@@ -59,7 +59,8 @@ class Bot:
         self.kill = KillSwitch()
         self.alerter = TelegramAlerter(secrets.tg_token, secrets.tg_chat,
                                        cfg.monitor.telegram_enabled, self.http)
-        self.fees = FeeTable(on_change=self.alerter.fee_change)
+        self.fees = FeeTable.for_venue(cfg.venue)
+        self.fees.on_change = self.alerter.fee_change
         self.kill.on_trip = self.alerter.kill_switch
 
         self.books: dict = {}
@@ -78,9 +79,15 @@ class Bot:
         self.executor = self.paper
         self.engine = ExecutionEngine(self.executor, self.registry, self.ctx,
                                       on_fill=self.on_fill)
+        self.chain = None
         self.redeemer = RedeemWorker(self.gamma, self.ctx.portfolio, self.ctx.markets,
-                                     mode=cfg.mode, alert=self.alerter.send)
+                                     mode=cfg.mode, alert=self.alerter.send,
+                                     min_payout_usd=cfg.chain.min_redeem_usd)
+        self.merger = SetMerger(None, self.ctx.portfolio, self.ctx.markets, mode=cfg.mode,
+                                dry_run=cfg.chain.dry_run)
         self.strategies = self._build_strategies()
+        # Filled by rank_copy_wallets; empty means S5 follows nobody.
+        self.followed_wallets: list[str] = []
         self._tasks: list[asyncio.Task] = []
         self._shutting_down = False
 
@@ -102,13 +109,14 @@ class Bot:
         await self.db.connect()
         self.alerter.start()
 
-        geo = await check_geoblock(self.cfg.geoblock_url, self.http)
-        self.risk.geoblock_passed = not geo.get("blocked", True)
+        self.risk.geoblock_passed = await self._geoblock_gate()
 
         if self.cfg.mode == "live":
             await self._go_live()
         else:
-            log.info("mode: PAPER — no orders will be posted")
+            self.ctx.portfolio.free_usdc = self.cfg.paper_starting_usdc
+            log.info("mode: PAPER — no orders will be posted, simulated bankroll $%.2f",
+                     self.cfg.paper_starting_usdc)
 
         await self.refresh_universe()
         await self.refresh_fee_rates()
@@ -128,8 +136,54 @@ class Bot:
             asyncio.create_task(self._loop(self.redeem, 3600), name="redeem"),
             asyncio.create_task(self._loop(self.refresh_fee_rates, 6 * 3600), name="fees"),
             asyncio.create_task(self._loop(self.poll_copy_wallets, 120), name="copy"),
+            asyncio.create_task(
+                self._loop(self.rank_copy_wallets,
+                           self.cfg.strategies.s5_copy.rerank_hours * 3600),
+                name="copy_rank"),
             asyncio.create_task(self.daily_summary_loop(), name="daily_summary"),
         ]
+
+    async def _geoblock_gate(self) -> bool:
+        """Hard gate for the international venue; advisory for the US one.
+
+        Order placement is blocked from ~33 countries on the international
+        exchange, so a failure to verify is treated as a failure, not as a
+        pass. The US venue is the regulated route for US persons, and its
+        geoblock endpoint may not exist — there, an unreachable check warns
+        and continues rather than stopping a legal deployment.
+        """
+        try:
+            geo = await check_geoblock(self.cfg.geoblock_url, self.http)
+            return not geo.get("blocked", True)
+        except GeoblockError:
+            if self.cfg.venue == "us":
+                raise
+            log.error(
+                "geoblocked on the international exchange — if you are US-based, "
+                "set venue: us in bot.yaml to use the CFTC-regulated exchange"
+            )
+            raise
+        except httpx.HTTPError as exc:
+            if self.cfg.venue == "us":
+                log.warning("us geoblock endpoint unreachable (%s); continuing", exc)
+                return True
+            raise
+
+    def _build_chain(self):
+        """Polygon signer for allowances, redemption and merges.
+
+        Built only in live mode, and only when something needs it — paper mode
+        never touches the chain and never imports web3.
+        """
+        from pmbot.chain import ChainClient, load_contracts
+
+        contracts = load_contracts(self.cfg.chain_id, self.cfg.chain.contracts)
+        return ChainClient(
+            rpc_url=self.cfg.chain.rpc_url,
+            private_key=self.secrets.private_key,
+            contracts=contracts,
+            chain_id=self.cfg.chain_id,
+        )
 
     async def _go_live(self) -> None:
         from pmbot.execution.live import LiveExecutor
@@ -149,6 +203,19 @@ class Bot:
         self.user_feed = UserFeed(self.cfg.ws_host, creds.api_key, creds.api_secret,
                                   creds.api_passphrase, self.on_user_event)
         self.user_feed.start()
+
+        if self.cfg.chain.auto_redeem or self.cfg.chain.auto_merge_sets:
+            try:
+                self.chain = await asyncio.to_thread(self._build_chain)
+            except Exception as exc:  # noqa: BLE001 - missing web3, bad RPC, bad address
+                log.error("on-chain settlement disabled: %s", exc)
+                self.alerter.send(f"on-chain settlement unavailable: {exc}")
+            else:
+                self.redeemer.redeemer = ChainRedeemer(self.chain, self.cfg.chain.dry_run)
+                self.merger.chain = self.chain
+                self.merger.mode = "live"
+                if self.cfg.chain.dry_run:
+                    log.warning("chain.dry_run is true: settlement will be logged, not sent")
         log.warning("mode: LIVE — orders will be posted with real capital")
         self.alerter.send(f"pmbot started LIVE with ${self.ctx.portfolio.free_usdc:.2f} free USDC")
 
@@ -176,11 +243,24 @@ class Bot:
             if changed:
                 log.warning("fee rates changed: %s", changed)
 
-    async def poll_copy_wallets(self) -> None:
+    async def rank_copy_wallets(self) -> None:
+        """Re-rank the candidate wallets daily; only the survivors are copied."""
         cfg = self.cfg.strategies.s5_copy
         if not cfg.enabled or not cfg.wallets:
             return
-        for wallet in cfg.wallets:
+        ranked = await self.data_api.rank_wallets(
+            cfg.wallets, cfg.min_wallet_pnl_usd, cfg.min_hit_rate,
+            cfg.min_closed_positions, cfg.max_idle_days,
+        )
+        self.followed_wallets = [stats.wallet for stats in ranked]
+        log.info("copy: following %d of %d candidate wallets",
+                 len(self.followed_wallets), len(cfg.wallets))
+
+    async def poll_copy_wallets(self) -> None:
+        cfg = self.cfg.strategies.s5_copy
+        if not cfg.enabled or not self.followed_wallets:
+            return
+        for wallet in self.followed_wallets:
             try:
                 fills = await self.data_api.trades(wallet, limit=50)
             except httpx.HTTPError as exc:
@@ -318,6 +398,18 @@ class Bot:
                                     self.ctx.portfolio.position_value(marks))
 
     async def redeem(self) -> None:
+        """Hourly settlement sweep: merge complete sets, then redeem resolved
+        positions. Merging first frees capital that no longer needs an oracle.
+        """
+        if self.cfg.chain.auto_merge_sets:
+            merged = await self.merger.sweep()
+            if merged:
+                self.alerter.send(
+                    f"merged {len(merged)} complete sets for "
+                    f"${sum(m.proceeds for m in merged):.2f}"
+                )
+        if not self.cfg.chain.auto_redeem:
+            return
         try:
             redemptions = await self.redeemer.sweep()
         except httpx.HTTPError as exc:
@@ -358,6 +450,7 @@ class Bot:
         return {
             "healthy": trip is None and self.market_feed.age_s() < 60,
             "mode": self.cfg.mode,
+            "venue": self.cfg.venue,
             "ws_market_age_s": round(self.market_feed.age_s(), 2),
             "ws_connected": self.market_feed.connected,
             "open_orders": self.registry.open_count(),

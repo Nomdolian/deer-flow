@@ -18,6 +18,9 @@ dependencies = [
 # Only needed for mode: live — paper mode, tests and the backtester never
 # import the SDK. Pin it: V2 ships breaking changes with short notice.
 live = ["py-clob-client-v2==1.1.0"]
+# Allowances, redemption and split/merge are Polygon transactions, not API
+# calls. Paper mode, the tests and the backtester never import web3.
+chain = ["web3>=7.0.0"]
 dev = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "ruff>=0.7.0"]
 
 [project.scripts]

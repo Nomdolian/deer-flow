@@ -11,11 +11,13 @@ orders), and a few cents of Polygon gas.
 
 ---
 
+**Full step-by-step setup: [`docs/SETUP.md`](docs/SETUP.md).** Start there.
+
 ## Quick start
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e .            # add '.[live]' only when you are ready to trade real money
+pip install -e '.[dev]'     # add '.[live,chain]' when you are ready to trade real money
 cp .env.example .env        # chmod 600; leave PRIVATE_KEY empty for paper mode
 
 python -m scripts.phase0_check     # geoblock + public reads (phase 0)
@@ -26,6 +28,11 @@ python -m scripts.report           # what traded, what was vetoed, and why
 `python -m pmbot --mode live` posts real orders. Do not run it until the paper
 gate in `pmbot/backtest/metrics.py:gate_for_live` passes.
 
+**US-based?** The international exchange blocks order placement from ~33
+countries and the bot refuses to start there. Set `venue: us` in `bot.yaml`
+for the CFTC-regulated exchange — read the caveat in step 9 of the setup guide
+before going live on it.
+
 ## Where things are
 
 ```
@@ -34,17 +41,19 @@ pmbot/
 ├── orchestrator.py     wiring and the supervised task loops
 ├── config.py           bot.yaml + .env, typed; PMBOT_* env overrides
 ├── auth.py             geoblock gate, L2 credential derive + cache, client build
+├── chain.py            Polygon: allowances, redemption, split/merge (optional web3)
 ├── state.py            books, positions, equity — the Context strategies read
 ├── universe.py         Market model + the hard filters
 ├── fees.py             fee table, fee formula, edge-per-day
 ├── data/               gamma · clob_rest · ws_market · ws_user · external · data_api · book · ratelimit
 ├── strategies/         s1_maker · s2_arb · s3_fairvalue · s4_longshot · s5_copy
 ├── risk/               engine (veto chain) · sizing (fractional Kelly) · killswitch
-├── execution/          engine · paper · live · registry · redeem
+├── execution/          engine · paper · live · registry · redeem (+ chain redeemer, set merger)
 ├── store/              db (SQLite) · journal (adaptive weights)
 ├── monitor/            telegram · health
 └── backtest/           replay · metrics
-scripts/                phase0_check · run_replay · report
+scripts/                phase0_check · setup_allowances · settle · run_replay · report
+docs/SETUP.md           the step-by-step guide
 deploy/                 systemd unit · nightly SQLite backup
 ```
 
@@ -76,7 +85,7 @@ exposure per *event*, because ten markets on one election are one bet.
 | 2 | websocket books, staleness, reconnect | same run; watch `ws_market_age_s` on `/health` |
 | 3 | fee model + risk + paper execution + S2 | S1/S2 are on by default in `bot.yaml` |
 | 4 | S1 + S3, **30 days of paper**, Telegram live | set `TG_TOKEN`/`TG_CHAT` in `.env` |
-| 5 | live, $100–250, one strategy, smallest sizes | `--mode live` once the gate passes |
+| 5 | live, $100–250, one strategy, smallest sizes | allowances (`scripts.setup_allowances`), then `--mode live` |
 | 6 | journal → adaptive weighting, add S4/S5 | weights recompute nightly and scale caps |
 
 The gate for step 5 (`gate_for_live`): ≥100 trades, positive expectancy after
@@ -92,6 +101,27 @@ modelled fees, max drawdown below the daily kill threshold, and Sharpe > 1.
 - `backtest/replay.py` runs on `/prices-history`, which is mid/last-trade
   only. There is no depth and no queue, so its maker results are optimistic by
   construction. It catches broken logic; it does not prove edge.
+
+## Settlement
+
+Three things are Polygon transactions rather than API calls, and `pmbot/chain.py`
+handles all of them:
+
+- **Allowances** — until USDC and the CTF ERC-1155 are approved to the
+  exchange contracts, every signed order is rejected.
+  `python -m scripts.setup_allowances` shows the plan; `--send` submits it.
+  Addresses come from the SDK's own contract config, and the script refuses to
+  approve a collateral contract that does not report USDC with 6 decimals.
+- **Redemption** — resolved positions are swept hourly. Losers are cleared off
+  the books without a transaction (there is nothing to claim, and the winner's
+  `redeemPositions` settles the whole condition anyway).
+- **Merging complete sets** — an unwound arb leaves you holding both sides of a
+  binary market. That set is worth exactly $1 now via `mergePositions`, so the
+  capital comes back weeks before resolution.
+
+All of it defaults to `chain.dry_run: true`: it logs the transaction it would
+send and books nothing, so the accounting cannot drift from what actually
+happened on chain. Read one dry run, then turn it off.
 
 ## Kill switches
 
@@ -159,29 +189,35 @@ state; it 503s when the feed is stale or a switch is tripped.
 
 ## Known gaps (deliberate, not hidden)
 
-- **Live redemption is not automated.** Winning tokens redeem 1:1 through the
-  CTF contract, which is an on-chain call and would need a web3 dependency and
-  a second signing path. `RedeemWorker` detects resolved positions and alerts
-  you to redeem them; in paper mode it books the payout. Supply a `redeemer`
-  callable to close this.
-- **S2 does not mint/merge complete sets.** It trades the book only. Split and
-  merge against the CTF contract is the same on-chain gap as above.
-- **Polymarket US** (`docs.polymarket.us`, flat 0.05 taker / −0.0125 maker
-  rebate) is not implemented. If you are US-based the geoblock gate will stop
-  the bot at startup, which is the intended behaviour.
+- **The US venue is only half-verified.** `venue: us` switches the hosts and
+  the flat 0.05/0.0125 fee schedule, and data plus paper trading work. Live
+  order signing and the settlement contracts on that venue are *not* verified
+  against this build — its addresses are not in the pinned SDK. Set
+  `chain.contracts` explicitly from the US exchange's docs and test with a
+  single small order first.
+- **S2 does not mint sets to trade against a rich book.** It trades the book
+  and merges sets it ends up holding; minting into an over-priced set would
+  need gas-aware sizing and chain latency modelling, which is a different
+  beast from order-book arbitrage.
 - **The relayer** (`relayer-v2.polymarket.com`) is unused; EOA signing pays
-  its own gas.
+  its own gas. Proxy-wallet users (`signature_type` 1 and 2) get gasless
+  transactions from the exchange anyway.
 - **`GET /fee-rate-bps` is best-effort.** If your deployment does not serve
   it, the table stays at the compiled-in September 2026 rates — check them
-  before going live.
-- **S5's wallet ranking is a stub filter** on realised PnL. It is good for
-  market selection and weak as a standalone edge, as the blueprint says.
+  before going live. A change that *is* served fires a Telegram alert.
+- **Wallet discovery for S5 is manual.** Put candidates from the public
+  leaderboard in `strategies.s5_copy.wallets`; the bot ranks them on realised
+  PnL, hit rate, sample size and recency, and follows only the survivors.
+  There is no leaderboard endpoint this build can verify.
+- **`prices-history` has no depth**, so replay flatters maker strategies. This
+  is a property of the free data, not something code can fix. Paper trading
+  against the real book is the test that counts.
 
 ## Tests
 
 ```bash
 pip install -e '.[dev]'
-pytest -q          # 142 tests, no network, no SDK required
+pytest -q          # 182 tests, no network, no SDK, no chain access required
 ruff check pmbot tests scripts
 ```
 
@@ -189,7 +225,8 @@ The suite covers the fee model, book delta application and staleness, the
 universe filters, every strategy's entry and veto conditions, the risk veto
 chain and sizing caps, paper fill simulation, the order state machine and
 reconciliation, journal weighting, redemption, and an end-to-end paper loop
-through the orchestrator.
+through the orchestrator, plus the on-chain layer against a fake web3
+(allowances, redemption routing, set merging) and venue selection.
 
 **Bottom line:** the plumbing is the easy part. Spend your time on the
 fee-adjusted edge model and on 30 honest days of paper trading. S1 and S2 are

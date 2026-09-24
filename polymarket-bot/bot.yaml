@@ -1,6 +1,11 @@
 # Starter config. Everything here is deliberately conservative; the numbers
 # that move money live in this file so changes show up in a diff.
 mode: paper                 # paper | live — do not switch until phase 5
+# international: the global exchange (blocked from ~33 countries including
+#   the US, UK, DE, FR, SG and Ontario — order placement only, data is open).
+# us: the CFTC-regulated Polymarket US exchange. Selecting it repoints every
+#   host below automatically.
+venue: international
 host: https://clob.polymarket.com
 gamma_host: https://gamma-api.polymarket.com
 data_host: https://data-api.polymarket.com
@@ -10,6 +15,7 @@ binance_ws: wss://stream.binance.com:9443/ws
 chain_id: 137
 signature_type: 0           # 0 EOA · 1 Magic · 2 Safe proxy (3 is unsupported, see README)
 db_path: pmbot.sqlite
+paper_starting_usdc: 500    # simulated bankroll; live mode reads the real balance
 loop_interval_s: 1.0
 
 universe:
@@ -55,7 +61,11 @@ strategies:
     min_wallet_pnl_usd: 50000
     max_latency_cents: 2
     size_scalar: 0.05
-    wallets: []
+    wallets: []             # candidates to consider; discovery is manual
+    min_hit_rate: 0.5       # a coin flipper with one big win is not an edge
+    min_closed_positions: 20
+    max_idle_days: 90
+    rerank_hours: 24
 
 risk:
   max_position_pct_per_market: 2
@@ -80,6 +90,17 @@ risk:
     s3_fairvalue: 10
     s4_longshot: 3
     s5_copy: 5
+
+# Polygon access, for the three things the CLOB API cannot do: allowances,
+# redemption, and split/merge. Only used in live mode.
+chain:
+  rpc_url: https://polygon-rpc.com
+  auto_redeem: true         # sweep resolved positions hourly
+  auto_merge_sets: true     # turn complete sets back into USDC early
+  min_redeem_usd: 1.0       # below this, gas costs more than the claim
+  dry_run: true             # log transactions instead of sending them.
+                            # Read one dry run, then set this to false.
+  contracts: {}             # override only if you are ahead of the pinned SDK
 
 monitor:
   telegram_enabled: true

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Mode = Literal["paper", "live"]
+Venue = Literal["international", "us"]
 
 
 class UniverseConfig(BaseModel):
@@ -74,7 +75,13 @@ class CopyConfig(BaseModel):
     min_wallet_pnl_usd: float = 50_000
     max_latency_cents: float = 2
     size_scalar: float = 0.05
+    # Candidates to consider. Discovery is manual (the public leaderboard);
+    # the bars below decide which of them are actually followed.
     wallets: list[str] = Field(default_factory=list)
+    min_hit_rate: float = 0.5
+    min_closed_positions: int = 20
+    max_idle_days: float = 90
+    rerank_hours: float = 24
 
 
 class StrategiesConfig(BaseModel):
@@ -118,6 +125,25 @@ class RiskConfig(BaseModel):
     min_edge_per_day_cents: float = 0.05
 
 
+class ChainConfig(BaseModel):
+    """Polygon access for the things the CLOB API cannot do: allowances,
+    redemption, and split/merge. Only needed in live mode.
+    """
+
+    rpc_url: str = "https://polygon-rpc.com"
+    # Empty means "take it from the SDK's own contract config", which is what
+    # the order signer uses. Override only if your deployment is ahead of the
+    # pinned SDK — and verify on a block explorer first.
+    contracts: dict[str, str] = Field(default_factory=dict)
+    auto_redeem: bool = True
+    auto_merge_sets: bool = True
+    # Redemption costs gas; below this the sweep is not worth the transaction.
+    min_redeem_usd: float = 1.0
+    # A dry run logs every transaction it would send and sends nothing. Turn
+    # it off deliberately, once you have read a dry run.
+    dry_run: bool = True
+
+
 class MonitorConfig(BaseModel):
     telegram_enabled: bool = True
     heartbeat_minutes: int = 15
@@ -125,10 +151,24 @@ class MonitorConfig(BaseModel):
     health_port: int = 8787
 
 
+# The US venue is a separate, CFTC-regulated exchange with its own hosts and
+# a flat fee schedule. Selecting it rewrites the hosts below at load time.
+US_HOSTS = {
+    "host": "https://clob.polymarket.us",
+    "geoblock_url": "https://polymarket.us/api/geoblock",
+    "gamma_host": "https://gamma-api.polymarket.us",
+    "data_host": "https://data-api.polymarket.us",
+    "ws_host": "wss://ws-subscriptions-clob.polymarket.us",
+}
+
+
 class BotConfig(BaseModel):
     """The whole of bot.yaml, typed."""
 
     mode: Mode = "paper"
+    # international: the global exchange, blocked from ~33 countries.
+    # us: the CFTC-regulated venue, flat 0.05 taker with a maker rebate.
+    venue: Venue = "international"
     host: str = "https://clob.polymarket.com"
     gamma_host: str = "https://gamma-api.polymarket.com"
     data_host: str = "https://data-api.polymarket.com"
@@ -138,8 +178,14 @@ class BotConfig(BaseModel):
     chain_id: int = 137
     signature_type: int = 0
     db_path: str = "pmbot.sqlite"
+    # Simulated bankroll for paper mode. Live mode ignores it and reads the
+    # real USDC balance from the chain. Set it to what you actually intend to
+    # trade with — sizing is a percentage of equity, so a paper run at $50k
+    # tells you nothing about how the bot behaves at $250.
+    paper_starting_usdc: float = 500.0
     loop_interval_s: float = 1.0
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
+    chain: ChainConfig = Field(default_factory=ChainConfig)
     strategies: StrategiesConfig = Field(default_factory=StrategiesConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     monitor: MonitorConfig = Field(default_factory=MonitorConfig)
@@ -167,7 +213,23 @@ def load_config(path: str | Path = "bot.yaml") -> BotConfig:
     if p.exists():
         raw = yaml.safe_load(p.read_text()) or {}
     cfg = BotConfig.model_validate(raw)
-    return _apply_env_overrides(cfg)
+    cfg = _apply_env_overrides(cfg)
+    return _apply_venue(cfg, raw)
+
+
+def _apply_venue(cfg: BotConfig, raw: dict[str, Any]) -> BotConfig:
+    """Point the hosts at the selected venue unless they were set explicitly.
+
+    A US-based operator cannot legally trade the international exchange, and
+    the geoblock gate will stop them at startup; switching venue is the fix,
+    not a workaround to be applied silently.
+    """
+    if cfg.venue != "us":
+        return cfg
+    for field_name, host in US_HOSTS.items():
+        if field_name not in raw:
+            setattr(cfg, field_name, host)
+    return cfg
 
 
 def _apply_env_overrides(cfg: BotConfig) -> BotConfig:

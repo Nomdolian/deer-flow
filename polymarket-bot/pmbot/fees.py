@@ -24,8 +24,11 @@ DEFAULT_FEE_RATES: dict[str, float] = {
     "crypto": 0.07,
 }
 
-# Polymarket US (CFTC-regulated) is a flat schedule with a maker rebate.
-US_FEE_RATES: dict[str, float] = {"other": 0.05}
+# Polymarket US (CFTC-regulated) is a flat 0.05 taker schedule across every
+# category, with a published 0.0125 maker rebate.
+US_TAKER_RATE = 0.05
+US_MAKER_REBATE = 0.0125
+US_FEE_RATES: dict[str, float] = dict.fromkeys(DEFAULT_FEE_RATES, US_TAKER_RATE)
 
 DEFAULT_CATEGORY = "other"
 
@@ -80,8 +83,21 @@ class FeeTable:
 
     rates: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_FEE_RATES))
     exponent: float = 1.0
+    # Credited to makers by the venue. Modelled for reporting only: paper mode
+    # never books it, because it is not money until you have seen it land.
+    maker_rebate_rate: float = 0.0
     updated_ts: float = field(default_factory=time.time)
     on_change: Callable[[str, float, float], None] | None = None
+
+    @classmethod
+    def for_venue(cls, venue: str) -> FeeTable:
+        if venue == "us":
+            return cls(rates=dict(US_FEE_RATES), maker_rebate_rate=US_MAKER_REBATE)
+        return cls()
+
+    def maker_rebate(self, shares: float, price: float) -> float:
+        """What a maker fill is expected to earn back. Reporting only."""
+        return taker_fee(shares, price, self.maker_rebate_rate, self.exponent)
 
     def rate_for(self, category: str | None) -> float:
         if not category:
