@@ -1,0 +1,18 @@
+[Unit]
+Description=Polymarket Bot
+After=network-online.target
+
+[Service]
+ExecStart=/opt/pmbot/.venv/bin/python -m pmbot
+WorkingDirectory=/opt/pmbot
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/pmbot/.env
+# The process holds a hot private key: give it nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pmbot
+
+[Install]
+WantedBy=multi-user.target

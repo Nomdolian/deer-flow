@@ -1,0 +1,14 @@
+# Blocks a private key from ever reaching git history.
+repos:
+  - repo: local
+    hooks:
+      - id: no-private-keys
+        name: block 32-byte hex secrets
+        entry: bash -c 'if git diff --cached -U0 | grep -nE "^\+.*0x[a-fA-F0-9]{64}"; then echo "refusing commit: looks like a private key"; exit 1; fi'
+        language: system
+        pass_filenames: false
+      - id: no-env-file
+        name: block .env
+        entry: bash -c 'if git diff --cached --name-only | grep -qE "(^|/)\.env$"; then echo "refusing commit: .env"; exit 1; fi'
+        language: system
+        pass_filenames: false
